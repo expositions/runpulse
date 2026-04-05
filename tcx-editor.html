@@ -140,6 +140,19 @@ button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
 .btn-bulk.green{border-color:rgba(16,212,160,0.3);color:var(--green)}
 .btn-bulk.green:hover{background:var(--green-dim)}
 
+/* MAP TOOLBAR */
+.map-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.mode-btn{padding:5px 12px;border-radius:100px;font-family:var(--font-num);font-size:0.7rem;font-weight:600;letter-spacing:0.06em;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);transition:all 0.15s;text-transform:uppercase}
+.mode-btn:hover{background:var(--surface-3);color:var(--text)}
+.mode-btn.active{background:var(--green-dim);border-color:rgba(16,212,160,0.3);color:var(--green)}
+.mode-btn.danger{color:var(--red);border-color:rgba(245,79,95,0.2)}
+.mode-btn.danger:hover{background:var(--red-dim)}
+.toolbar-sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+.toolbar-info{font-family:var(--font-num);font-size:0.68rem;color:var(--text-faint);letter-spacing:0.04em;margin-left:auto}
+.toolbar-info strong{color:var(--amber);font-weight:600}
+.map-tooltip{position:absolute;background:var(--surface-3);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 10px;font-family:var(--font-num);font-size:0.68rem;color:var(--text);pointer-events:none;z-index:20;white-space:nowrap;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.4)}
+.map-tooltip.show{display:block}
+
 /* STRAVA SECTION */
 .strava-section{border-top:1px solid var(--border);background:var(--surface)}
 .strava-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none}
@@ -222,17 +235,26 @@ button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
   <div class="editor-body">
 
     <!-- MAP PANEL -->
-    <div class="map-panel">
+    <div class="map-panel" style="position:relative">
       <div class="map-header">
         <span class="map-title">GPS Track</span>
         <div class="map-legend">
           <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Corrected</div>
-          <div class="legend-dot" style="background:#4a9eff;width:10px;height:10px;border-radius:50%;flex-shrink:0"></div><span style="font-family:var(--font-num);font-size:0.68rem;color:var(--text-muted)">Original</span>
+          <div class="legend-item"><div class="legend-dot" style="background:#4a9eff"></div>Original</div>
           <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Anomaly</div>
-          <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Highlighted</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#c050ff"></div>Manual Del</div>
         </div>
       </div>
+      <div class="map-toolbar" id="map-toolbar" style="display:none">
+        <button class="mode-btn active" id="mode-point" onclick="setMapMode('point')">Point</button>
+        <button class="mode-btn" id="mode-range" onclick="setMapMode('range')">Range</button>
+        <div class="toolbar-sep"></div>
+        <button class="mode-btn danger" id="btn-undo-map" onclick="undoLastManual()" style="display:none">Undo</button>
+        <button class="mode-btn danger" id="btn-clear-manual" onclick="clearManualDeletes()" style="display:none">Clear Manual</button>
+        <span class="toolbar-info" id="map-info">Click a point to delete it</span>
+      </div>
       <canvas id="map-canvas"></canvas>
+      <div class="map-tooltip" id="map-tooltip"></div>
     </div>
 
     <!-- RIGHT PANEL -->
@@ -287,6 +309,14 @@ let allPoints = [];     // parsed from TCX
 let anomalies = [];     // detected anomaly objects
 let corrections = {};   // idx -> accepted/rejected/'pending'
 let highlightedAnomaly = null;
+
+// Manual map editing
+let manualDeletes = new Set();  // point indices manually marked for deletion
+let manualHistory = [];         // undo stack: each entry is {type, indices:[...]}
+let mapMode = 'point';          // 'point' or 'range'
+let rangeAnchor = null;         // first click index in range mode
+let hoverIdx = null;            // point index under cursor
+let cachedMapBounds = null;     // saved after drawMap for hit-testing
 
 // ============================================================
 // HAVERSINE
@@ -486,7 +516,7 @@ function detectAnomalies(pts) {
 // APPLY CORRECTIONS → produce corrected point array
 // ============================================================
 function buildCorrectedPoints() {
-  const skipSet = new Set();
+  const skipSet = new Set(manualDeletes);
   for (const a of anomalies) {
     if (corrections[a.idx] !== 'accepted') continue;
     if (a.fix === 'remove' || a.fix === 'interpolate') {
@@ -516,7 +546,7 @@ function updateStats() {
   const diff = corrDist - origDist;
   corrEl.className = 'stat-val' + (diff < -0.5 ? ' changed' : diff > 0.5 ? ' worse' : '');
 
-  document.getElementById('stat-accepted').textContent = accepted;
+  document.getElementById('stat-accepted').textContent = accepted + (manualDeletes.size ? ` + ${manualDeletes.size}` : '');
   document.getElementById('stat-anomalies').textContent = anomalies.length;
 
   const badge = document.getElementById('anomaly-badge');
@@ -536,6 +566,36 @@ function latLonToCanvas(lat, lon, bounds, w, h, pad) {
   return [x, y];
 }
 
+function computeMapBounds(w, h, pad) {
+  const lats = allPoints.map(p => p.lat);
+  const lons = allPoints.map(p => p.lon);
+  const bounds = {
+    minLat: Math.min(...lats), maxLat: Math.max(...lats),
+    minLon: Math.min(...lons), maxLon: Math.max(...lons),
+  };
+  const dLat = bounds.maxLat - bounds.minLat || 0.001;
+  const dLon = bounds.maxLon - bounds.minLon || 0.001;
+  bounds.minLat -= dLat * 0.05; bounds.maxLat += dLat * 0.05;
+  bounds.minLon -= dLon * 0.05; bounds.maxLon += dLon * 0.05;
+
+  const latCenter = (bounds.minLat + bounds.maxLat) / 2;
+  const lonScale = Math.cos(latCenter * Math.PI / 180);
+  const rangeY = bounds.maxLat - bounds.minLat;
+  const rangeX = (bounds.maxLon - bounds.minLon) * lonScale;
+  if (rangeX > 0 && rangeY > 0) {
+    const mapW = w - 2 * pad, mapH = h - 2 * pad;
+    if (rangeX / rangeY > mapW / mapH) {
+      const excess = (rangeX / rangeY - mapW / mapH) * rangeY / 2;
+      bounds.minLat -= excess; bounds.maxLat += excess;
+    } else {
+      const excess = (rangeY / rangeX - mapH / mapW) * rangeX / lonScale / 2;
+      bounds.minLon -= excess; bounds.maxLon += excess;
+    }
+  }
+  bounds.w = w; bounds.h = h; bounds.pad = pad;
+  return bounds;
+}
+
 function drawMap(focusIdx) {
   const canvas = document.getElementById('map-canvas');
   const w = canvas.offsetWidth, h = canvas.offsetHeight;
@@ -547,34 +607,8 @@ function drawMap(focusIdx) {
   if (!allPoints.length) return;
 
   const pad = 20;
-  const lats = allPoints.map(p => p.lat);
-  const lons = allPoints.map(p => p.lon);
-  const bounds = {
-    minLat: Math.min(...lats), maxLat: Math.max(...lats),
-    minLon: Math.min(...lons), maxLon: Math.max(...lons),
-  };
-  // Expand bounds slightly to avoid flat lines
-  const dLat = bounds.maxLat - bounds.minLat || 0.001;
-  const dLon = bounds.maxLon - bounds.minLon || 0.001;
-  bounds.minLat -= dLat * 0.05; bounds.maxLat += dLat * 0.05;
-  bounds.minLon -= dLon * 0.05; bounds.maxLon += dLon * 0.05;
-
-  // Correct aspect ratio (mercator approximation)
-  const latCenter = (bounds.minLat + bounds.maxLat) / 2;
-  const lonScale = Math.cos(latCenter * Math.PI / 180);
-  const rangeY = bounds.maxLat - bounds.minLat;
-  const rangeX = (bounds.maxLon - bounds.minLon) * lonScale;
-  if (rangeX > 0 && rangeY > 0) {
-    const mapW = w - 2 * pad, mapH = h - 2 * pad;
-    if (rangeX / rangeY > mapW / mapH) {
-      // wider than tall: expand lat range
-      const excess = (rangeX / rangeY - mapW / mapH) * rangeY / 2;
-      bounds.minLat -= excess; bounds.maxLat += excess;
-    } else {
-      const excess = (rangeY / rangeX - mapH / mapW) * rangeX / lonScale / 2;
-      bounds.minLon -= excess; bounds.maxLon += excess;
-    }
-  }
+  const bounds = computeMapBounds(w, h, pad);
+  cachedMapBounds = bounds;
 
   function toXY(lat, lon) { return latLonToCanvas(lat, lon, bounds, w, h, pad); }
 
@@ -582,7 +616,7 @@ function drawMap(focusIdx) {
   ctx.fillStyle = '#0d1018';
   ctx.fillRect(0, 0, w, h);
 
-  // Collect anomaly indices for quick lookup
+  // Collect anomaly indices
   const anomalySet = new Set();
   const acceptedSet = new Set();
   for (const a of anomalies) {
@@ -593,19 +627,25 @@ function drawMap(focusIdx) {
     }
   }
 
-  // Highlighted anomaly points
+  // Highlighted anomaly points (from card hover)
   const highlightSet = new Set();
   if (highlightedAnomaly !== null) {
     const a = anomalies[highlightedAnomaly];
     if (a) {
       const end = a.idxEnd !== undefined ? a.idxEnd : a.idx;
-      for (let j = Math.max(0, a.idx - 2); j <= Math.min(allPoints.length - 1, end + 2); j++) {
+      for (let j = Math.max(0, a.idx - 2); j <= Math.min(allPoints.length - 1, end + 2); j++)
         highlightSet.add(j);
-      }
     }
   }
 
-  // Draw original track (faint blue)
+  // Range preview set (in range mode, anchor is set, show preview of what would be selected)
+  const rangePreview = new Set();
+  if (mapMode === 'range' && rangeAnchor !== null && hoverIdx !== null && hoverIdx !== rangeAnchor) {
+    const lo = Math.min(rangeAnchor, hoverIdx), hi = Math.max(rangeAnchor, hoverIdx);
+    for (let j = lo; j <= hi; j++) rangePreview.add(j);
+  }
+
+  // ── Draw original track (faint blue) ──
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(74,158,255,0.35)';
   ctx.lineWidth = 1.5;
@@ -616,7 +656,7 @@ function drawMap(focusIdx) {
   }
   ctx.stroke();
 
-  // Draw corrected track (green)
+  // ── Draw corrected track (green) ──
   const corrPts = buildCorrectedPoints();
   if (corrPts.length > 1) {
     ctx.beginPath();
@@ -630,25 +670,59 @@ function drawMap(focusIdx) {
     ctx.stroke();
   }
 
-  // Draw anomaly points (red dots)
-  for (const idx of anomalySet) {
-    if (idx >= allPoints.length) continue;
-    if (acceptedSet.has(idx)) continue; // accepted = no longer shown as problem
-    const [x, y] = toXY(allPoints[idx].lat, allPoints[idx].lon);
+  // ── Draw range preview highlight (amber translucent segments) ──
+  if (rangePreview.size > 0) {
     ctx.beginPath();
-    ctx.arc(x, y, highlightSet.has(idx) ? 6 : 4, 0, Math.PI * 2);
-    ctx.fillStyle = highlightSet.has(idx) ? '#f5a623' : 'rgba(245,79,95,0.8)';
-    ctx.fill();
+    ctx.strokeStyle = 'rgba(245,166,35,0.5)';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    let started = false;
+    for (const idx of rangePreview) {
+      const [x, y] = toXY(allPoints[idx].lat, allPoints[idx].lon);
+      started ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), started = true);
+    }
+    ctx.stroke();
   }
 
-  // Start / end markers
+  // ── Draw individual point dots ──
+  // We draw small dots for all points at low opacity so they're clickable
+  for (let i = 0; i < allPoints.length; i++) {
+    const [x, y] = toXY(allPoints[i].lat, allPoints[i].lon);
+    let color = null;
+    let radius = 2.5;
+
+    if (manualDeletes.has(i)) {
+      color = '#c050ff'; radius = 5; // purple — manually deleted
+    } else if (rangePreview.has(i)) {
+      color = 'rgba(245,166,35,0.8)'; radius = 4.5;
+    } else if (highlightSet.has(i)) {
+      color = '#f5a623'; radius = 6;
+    } else if (anomalySet.has(i) && !acceptedSet.has(i)) {
+      color = 'rgba(245,79,95,0.8)'; radius = 4;
+    } else if (i === hoverIdx) {
+      color = '#fff'; radius = 5;
+    } else if (i === rangeAnchor) {
+      color = '#f5a623'; radius = 6;
+    }
+
+    if (color) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+  }
+
+  // Start / end markers (always on top)
   if (allPoints.length) {
     const [sx, sy] = toXY(allPoints[0].lat, allPoints[0].lon);
     ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI*2);
     ctx.fillStyle = '#10d4a0'; ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = '#000'; ctx.stroke();
     const [ex, ey] = toXY(allPoints[allPoints.length-1].lat, allPoints[allPoints.length-1].lon);
     ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI*2);
     ctx.fillStyle = '#f54f5f'; ctx.fill();
+    ctx.stroke();
   }
 }
 
@@ -939,7 +1013,14 @@ function loadTCX(xmlStr) {
     document.getElementById('export-bar').style.display     = 'flex';
     document.getElementById('bulk-actions').style.display   = 'flex';
     document.getElementById('strava-section').style.display = 'block';
+    document.getElementById('map-toolbar').style.display    = 'flex';
 
+    manualDeletes = new Set();
+    manualHistory = [];
+    rangeAnchor = null;
+    hoverIdx = null;
+    mapMode = 'point';
+    updateMapInfo();
     renderAnomalyCards();
     updateStats();
 
@@ -959,7 +1040,9 @@ function loadNewFile() {
   document.getElementById('upload-screen').style.display  = 'flex';
   document.getElementById('editor-screen').style.display  = 'none';
   document.getElementById('strava-section').style.display = 'none';
+  document.getElementById('map-toolbar').style.display    = 'none';
   allPoints = []; anomalies = []; corrections = {};
+  manualDeletes = new Set(); manualHistory = []; rangeAnchor = null; hoverIdx = null;
   stravaLoaded = false;
 }
 
@@ -986,6 +1069,161 @@ dropZone.addEventListener('drop', e => {
   reader.onload = ev => loadTCX(ev.target.result);
   reader.readAsText(f);
 });
+
+// ============================================================
+// INTERACTIVE MAP — HIT TESTING & SELECTION
+// ============================================================
+function hitTestPoint(canvasX, canvasY, threshold) {
+  if (!cachedMapBounds || !allPoints.length) return -1;
+  const b = cachedMapBounds;
+  let bestIdx = -1, bestDist = threshold * threshold;
+  for (let i = 0; i < allPoints.length; i++) {
+    const [px, py] = latLonToCanvas(allPoints[i].lat, allPoints[i].lon, b, b.w, b.h, b.pad);
+    const dx = px - canvasX, dy = py - canvasY;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function getCanvasXY(e) {
+  const canvas = document.getElementById('map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  return [e.clientX - rect.left, e.clientY - rect.top];
+}
+
+// ── Mode switching ──
+function setMapMode(mode) {
+  mapMode = mode;
+  rangeAnchor = null;
+  document.getElementById('mode-point').classList.toggle('active', mode === 'point');
+  document.getElementById('mode-range').classList.toggle('active', mode === 'range');
+  updateMapInfo();
+  drawMap();
+}
+
+function updateMapInfo() {
+  const info = document.getElementById('map-info');
+  const btnUndo = document.getElementById('btn-undo-map');
+  const btnClear = document.getElementById('btn-clear-manual');
+  btnUndo.style.display = manualHistory.length ? '' : 'none';
+  btnClear.style.display = manualDeletes.size ? '' : 'none';
+
+  if (mapMode === 'point') {
+    info.innerHTML = manualDeletes.size
+      ? `<strong>${manualDeletes.size}</strong> points manually deleted — click to toggle`
+      : 'Click a point to delete it';
+  } else {
+    if (rangeAnchor !== null) {
+      info.innerHTML = `Anchor at #${rangeAnchor} — click second point to select range`;
+    } else {
+      info.innerHTML = 'Click first point (start of range)';
+    }
+  }
+}
+
+// ── Click handler ──
+document.getElementById('map-canvas').addEventListener('click', function(e) {
+  if (!allPoints.length) return;
+  const [cx, cy] = getCanvasXY(e);
+  const idx = hitTestPoint(cx, cy, 12);
+  if (idx < 0) {
+    // Clicked empty space — in range mode, cancel anchor
+    if (mapMode === 'range') { rangeAnchor = null; updateMapInfo(); drawMap(); }
+    return;
+  }
+
+  if (mapMode === 'point') {
+    // Toggle single point
+    if (manualDeletes.has(idx)) {
+      manualDeletes.delete(idx);
+      manualHistory.push({ type: 'restore', indices: [idx] });
+    } else {
+      manualDeletes.add(idx);
+      manualHistory.push({ type: 'delete', indices: [idx] });
+    }
+  } else {
+    // Range mode
+    if (rangeAnchor === null) {
+      rangeAnchor = idx;
+      updateMapInfo();
+      drawMap();
+      return;
+    } else {
+      const lo = Math.min(rangeAnchor, idx);
+      const hi = Math.max(rangeAnchor, idx);
+      const added = [];
+      for (let j = lo; j <= hi; j++) {
+        if (!manualDeletes.has(j)) { manualDeletes.add(j); added.push(j); }
+      }
+      if (added.length) manualHistory.push({ type: 'delete', indices: added });
+      rangeAnchor = null;
+    }
+  }
+  updateMapInfo();
+  updateStats(); // triggers drawMap
+});
+
+// ── Hover handler (for tooltip & highlight) ──
+document.getElementById('map-canvas').addEventListener('mousemove', function(e) {
+  if (!allPoints.length || !cachedMapBounds) return;
+  const [cx, cy] = getCanvasXY(e);
+  const idx = hitTestPoint(cx, cy, 14);
+  const prevHover = hoverIdx;
+  hoverIdx = idx >= 0 ? idx : null;
+
+  const tooltip = document.getElementById('map-tooltip');
+  if (hoverIdx !== null) {
+    const pt = allPoints[hoverIdx];
+    const time = new Date(pt.t).toLocaleTimeString([], { hour12: false });
+    let label = `#${hoverIdx} · ${time}`;
+    if (manualDeletes.has(hoverIdx)) label += ' · DELETED';
+    if (pt.hr > 0) label += ` · ${pt.hr} bpm`;
+    // Show distance from previous point
+    if (hoverIdx > 0) {
+      const d = haversine(allPoints[hoverIdx-1].lat, allPoints[hoverIdx-1].lon, pt.lat, pt.lon);
+      const dt = (pt.t - allPoints[hoverIdx-1].t) / 1000;
+      const speed = dt > 0 ? d / dt : 0;
+      label += ` · ${d.toFixed(1)}m / ${(speed * 3.6).toFixed(1)} km/h`;
+    }
+    tooltip.textContent = label;
+    tooltip.style.left = (e.clientX - document.getElementById('map-canvas').closest('.map-panel').getBoundingClientRect().left + 12) + 'px';
+    tooltip.style.top = (e.clientY - document.getElementById('map-canvas').closest('.map-panel').getBoundingClientRect().top - 30) + 'px';
+    tooltip.classList.add('show');
+  } else {
+    tooltip.classList.remove('show');
+  }
+
+  if (hoverIdx !== prevHover) drawMap();
+});
+
+document.getElementById('map-canvas').addEventListener('mouseleave', function() {
+  hoverIdx = null;
+  document.getElementById('map-tooltip').classList.remove('show');
+  drawMap();
+});
+
+// ── Undo / Clear ──
+function undoLastManual() {
+  if (!manualHistory.length) return;
+  const last = manualHistory.pop();
+  if (last.type === 'delete') {
+    for (const idx of last.indices) manualDeletes.delete(idx);
+  } else if (last.type === 'restore') {
+    for (const idx of last.indices) manualDeletes.add(idx);
+  }
+  updateMapInfo();
+  updateStats();
+}
+
+function clearManualDeletes() {
+  if (!manualDeletes.size) return;
+  manualHistory.push({ type: 'delete', indices: [...manualDeletes] });
+  manualDeletes.clear();
+  rangeAnchor = null;
+  updateMapInfo();
+  updateStats();
+}
 
 // Redraw map on resize
 window.addEventListener('resize', () => { if (allPoints.length) drawMap(); });
