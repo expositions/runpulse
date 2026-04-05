@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RunPulse → Strava Upload</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0d10;--surface:#13161c;--surface-2:#1b1f29;--border:rgba(255,255,255,0.07);--text:#e4e7f0;--text-muted:#6b7490;--text-faint:#3d4257;--green:#10d4a0;--amber:#f5a623;--red:#f54f5f;--font-body:'Barlow',sans-serif;--font-num:'Barlow Condensed',sans-serif;--r:12px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px 28px;max-width:440px;width:100%}
+h1{font-family:var(--font-num);font-size:1.3rem;font-weight:700;margin-bottom:6px}
+.sub{font-size:0.85rem;color:var(--text-muted);margin-bottom:20px;line-height:1.6}
+.step{text-align:left;background:var(--surface-2);border-radius:var(--r);padding:14px 16px;margin-bottom:12px;font-size:0.84rem;line-height:1.6;color:var(--text-muted)}
+.step strong{color:var(--text)}
+.step em{color:var(--amber);font-style:normal;font-weight:600}
+.btn{display:inline-block;padding:14px 28px;background:#fc4c02;color:#fff;border-radius:var(--r);font-family:var(--font-num);font-weight:700;font-size:0.95rem;letter-spacing:0.04em;text-decoration:none;transition:background 0.2s;border:none;cursor:pointer;margin-top:8px}
+.btn:hover{background:#e04400}
+.skip{display:block;margin-top:14px;font-size:0.78rem;color:var(--text-faint);text-decoration:underline;cursor:pointer}
+.countdown{font-family:var(--font-num);font-size:0.78rem;color:var(--text-faint);margin-top:12px}
+#auto-section{display:none}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Strava Upload (Desktop Mode)</h1>
+
+  <div id="setup-section">
+    <p class="sub">
+      To upload TCX files, Strava needs to open as the <strong>desktop website</strong>, not the mobile version or app.
+      Follow these steps once — Chrome remembers the setting for strava.com.
+    </p>
+
+    <div class="step">
+      <strong>Step 1:</strong> When Strava opens, tap Chrome's <em>3-dot menu</em> (top right)
+    </div>
+    <div class="step">
+      <strong>Step 2:</strong> Check <em>"Desktop site"</em> (or "Request desktop site")
+    </div>
+    <div class="step">
+      <strong>Step 3:</strong> Chrome will reload strava.com in desktop mode. This setting <strong>persists</strong> for strava.com across all future visits in Chrome.
+    </div>
+
+    <button class="btn" onclick="goToStrava()">Open Strava Upload</button>
+
+    <span class="skip" onclick="goToStrava()">Skip — I already have desktop mode enabled</span>
+  </div>
+
+  <div id="auto-section">
+    <p class="sub">Redirecting to Strava upload page...</p>
+    <div class="countdown" id="countdown-text">Opening in 2s</div>
+    <span class="skip" onclick="goToStravaNow()" style="margin-top:8px">Click here if it doesn't open</span>
+  </div>
+</div>
+
+<script>
+const STRAVA_URL = 'https://www.strava.com/upload/select';
+
+function goToStrava() {
+  document.getElementById('setup-section').style.display = 'none';
+  document.getElementById('auto-section').style.display = 'block';
+
+  // Short delay so the user sees the redirect message,
+  // then navigate within this tab. Since this tab was opened via
+  // intent:// targeting Chrome, the navigation stays in Chrome
+  // and does NOT trigger the Strava app.
+  let count = 2;
+  const el = document.getElementById('countdown-text');
+  const iv = setInterval(() => {
+    count--;
+    el.textContent = count > 0 ? `Opening in ${count}s` : 'Redirecting...';
+    if (count <= 0) {
+      clearInterval(iv);
+      goToStravaNow();
+    }
+  }, 1000);
+}
+
+function goToStravaNow() {
+  // location.replace prevents back-button returning to this helper page
+  window.location.replace(STRAVA_URL);
+}
+
+// If the user already knows the drill (came from a bookmark etc.),
+// check URL param for auto-redirect
+if (new URLSearchParams(window.location.search).has('auto')) {
+  goToStrava();
+}
+</script>
+</body>
+</html>

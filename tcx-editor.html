@@ -161,10 +161,6 @@ button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
 .strava-toggle{font-size:0.72rem;color:var(--text-faint);font-family:var(--font-num)}
 .strava-body{display:none;flex-direction:column}
 .strava-body.open{display:flex}
-.strava-iframe-wrap{position:relative;width:100%;height:600px;background:var(--bg);overflow:hidden}
-.strava-iframe-wrap iframe{width:100%;height:100%;border:none}
-.strava-fallback{padding:20px 16px;text-align:center}
-.strava-fallback p{font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;line-height:1.5}
 .btn-strava{display:inline-block;padding:10px 24px;background:#fc4c02;color:#fff;border-radius:var(--r);font-family:var(--font-num);font-weight:700;font-size:0.85rem;letter-spacing:0.04em;text-decoration:none;transition:background 0.2s}
 .btn-strava:hover{background:#e04400}
 .strava-note{font-size:0.7rem;color:var(--text-faint);padding:8px 16px;line-height:1.5;border-top:1px solid var(--border)}
@@ -278,15 +274,31 @@ button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
           <span class="strava-toggle" id="strava-toggle-label">Open</span>
         </div>
         <div class="strava-body" id="strava-body">
-          <div class="strava-iframe-wrap" id="strava-iframe-wrap">
-            <!-- iframe loaded on demand to avoid premature blocking -->
-          </div>
-          <div class="strava-fallback" id="strava-fallback" style="display:none">
-            <p>Strava blocked the embedded view (X-Frame-Options). Use this button to open Strava upload in a new browser tab instead.<br>Opening inside the browser prevents Android from redirecting to the Strava app.</p>
-            <a class="btn-strava" href="#" id="strava-link" onclick="openStravaTab(event)">Open Strava Upload in Browser</a>
-          </div>
-          <div class="strava-note">
-            Tip: Use "Export for Strava" below to get a cleaned file with 1Hz resampling, accuracy filtering, speed filtering, and drift removal — optimised for Strava's distance calculation. Then upload it here.
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+            <p style="font-size:0.82rem;color:var(--text-muted);line-height:1.6">
+              Open Strava's upload page <strong style="color:var(--text)">inside the browser</strong> — this bypasses the Strava app, which cannot upload TCX files.
+            </p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <!-- Direct intent to Strava in Chrome -->
+              <a class="btn-strava" onclick="openStravaAndroid(event)" href="#">
+                Open Strava in Chrome
+              </a>
+              <!-- Via helper page: opens our page in Chrome first, then redirects
+                   to Strava *within that tab* — double protection against app hijack,
+                   plus desktop-mode setup guide -->
+              <a class="btn-strava" style="background:#c23a00;color:#fff" onclick="openStravaViaHelper(event)" href="#">
+                Open via Helper (safer)
+              </a>
+              <!-- Desktop / iOS: direct link -->
+              <a class="btn-strava" style="background:var(--surface-3);color:var(--text);border:1px solid var(--border)"
+                 href="https://www.strava.com/upload/select" target="_blank" rel="noopener noreferrer">
+                New Tab (Desktop)
+              </a>
+            </div>
+            <div class="strava-note" style="padding:0;border:none;margin-top:4px">
+              Tip: Use "Export for Strava" below first — it applies 1Hz resampling, speed filtering, and drift removal optimised for Strava's distance calculation. Then upload the cleaned file.<br>
+              On Android, Chrome will remember the "Desktop site" setting for strava.com once you enable it.
+            </div>
           </div>
         </div>
       </div>
@@ -1043,7 +1055,6 @@ function loadNewFile() {
   document.getElementById('map-toolbar').style.display    = 'none';
   allPoints = []; anomalies = []; corrections = {};
   manualDeletes = new Set(); manualHistory = []; rangeAnchor = null; hoverIdx = null;
-  stravaLoaded = false;
 }
 
 // ============================================================
@@ -1232,71 +1243,29 @@ window.addEventListener('resize', () => { if (allPoints.length) drawMap(); });
 Number.prototype.toFixed0 = function() { return Math.round(this).toString(); };
 
 // ============================================================
-// STRAVA IFRAME
+// STRAVA PANEL
 // ============================================================
-// We load strava.com/upload in an iframe with "request desktop site"
-// achieved by forcing the iframe. If Strava blocks it via X-Frame-Options
-// (which it likely does), we detect the error and show a fallback button
-// that opens it in a new browser tab — still preventing the Android
-// Strava app from intercepting the navigation.
-
-let stravaLoaded = false;
-
 function toggleStrava() {
   const body = document.getElementById('strava-body');
   const label = document.getElementById('strava-toggle-label');
   const isOpen = body.classList.toggle('open');
   label.textContent = isOpen ? 'Close' : 'Open';
-  if (isOpen && !stravaLoaded) loadStravaIframe();
 }
 
-function loadStravaIframe() {
-  stravaLoaded = true;
-  const wrap = document.getElementById('strava-iframe-wrap');
-  const fallback = document.getElementById('strava-fallback');
-
-  const iframe = document.createElement('iframe');
-  // Force desktop mode by not sending mobile viewport — the iframe itself
-  // acts as a desktop-width container. We also set a title for a11y.
-  iframe.title = 'Strava Upload';
-  iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox');
-  iframe.src = 'https://www.strava.com/upload/select';
-
-  // Detect if Strava blocks the iframe
-  iframe.addEventListener('load', () => {
-    // If Strava served X-Frame-Options: DENY, the iframe will load but
-    // contentDocument will be null / cross-origin blocked. We can't reliably
-    // detect this, so we use a timeout heuristic: check if the iframe has
-    // painted any content.
-    setTimeout(() => {
-      try {
-        // Attempt to access — will throw if cross-origin (which is expected)
-        // but if the frame is blank/error page, we show fallback
-        const doc = iframe.contentDocument || iframe.contentWindow.document;
-        if (!doc || !doc.body || doc.body.innerHTML.length < 50) throw new Error('blocked');
-      } catch(e) {
-        // Most likely X-Frame-Options blocked it — show fallback
-        wrap.style.display = 'none';
-        fallback.style.display = 'block';
-      }
-    }, 3000);
-  });
-
-  iframe.addEventListener('error', () => {
-    wrap.style.display = 'none';
-    fallback.style.display = 'block';
-  });
-
-  wrap.innerHTML = '';
-  wrap.appendChild(iframe);
-}
-
-function openStravaTab(e) {
+function openStravaAndroid(e) {
   e.preventDefault();
-  // Using window.open keeps navigation inside the browser on Android,
-  // preventing the OS from intercepting and opening the Strava app.
-  // The '_blank' target with noopener ensures a clean browser tab.
-  window.open('https://www.strava.com/upload/select', '_blank', 'noopener,noreferrer');
+  // intent:// URI targeting Chrome directly for the Strava URL.
+  window.location.href = 'intent://www.strava.com/upload/select#Intent;scheme=https;package=com.android.chrome;end';
+}
+
+function openStravaViaHelper(e) {
+  e.preventDefault();
+  // Open our helper page in Chrome via intent. The helper then redirects
+  // to Strava *within that same Chrome tab*, so Android never gets a
+  // chance to hand the Strava URL to the Strava app.
+  const helperUrl = new URL('strava-upload.html', window.location.href).href;
+  const intentUri = `intent://${helperUrl.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`;
+  window.location.href = intentUri;
 }
 
 // ============================================================
