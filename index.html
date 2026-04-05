@@ -276,6 +276,22 @@ input{font:inherit;color:inherit}
         <span class="demo-hint">No HR monitor? Use demo mode to test.</span>
         <button class="btn-demo" id="btn-demo" onclick="toggleDemo()">DEMO</button>
       </div>
+
+      <!-- DEBUG PANEL -->
+      <div id="dbg-panel" style="display:none">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-top:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-family:var(--font-num);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.1em">BLE DEBUG LOG</span>
+            <button onclick="document.getElementById('dbg-log').textContent='';_dbgLines.length=0" style="font-size:0.7rem;color:var(--text-faint);font-family:var(--font-num)">CLEAR</button>
+          </div>
+          <pre id="dbg-log" style="font-size:0.62rem;color:var(--green);background:var(--bg);padding:10px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6;min-height:60px;font-family:monospace">Waiting for BLE data...</pre>
+        </div>
+      </div>
+
+      <!-- DEBUG TOGGLE -->
+      <div style="text-align:center">
+        <button onclick="const p=document.getElementById('dbg-panel');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'Show Debug Log':'Hide Debug Log'" style="font-size:0.7rem;color:var(--text-faint);font-family:var(--font-num);padding:6px 12px;border:1px solid var(--border);border-radius:100px;background:var(--surface-2)">Show Debug Log</button>
+      </div>
     </section>
 
     <!-- SETTINGS TAB -->
@@ -627,11 +643,42 @@ async function connectBLE() {
 }
 
 function onHRNotify(evt) {
-  const v=evt.target.value;
-  const flags=v.getUint8(0);
-  const bpm = (flags&0x1) ? v.getUint16(1,true) : v.getUint8(1);
+  const v = evt.target.value;
+  if (!v || v.byteLength < 2) { logDebug('BLE: packet too short: '+( v ? v.byteLength : 'null')); return; }
+  const flags = v.getUint8(0);
+  const is16bit = !!(flags & 0x1);
+  const sensorContactSupported = !!(flags & 0x4);
+  const sensorContactDetected  = !!(flags & 0x2);
+  let bpm;
+  if (is16bit) {
+    if (v.byteLength < 3) { logDebug('BLE: UINT16 flag but only '+v.byteLength+' bytes'); return; }
+    bpm = v.getUint16(1, true);
+  } else {
+    bpm = v.getUint8(1);
+  }
+  // Raw bytes for debug
+  const raw = Array.from({length:v.byteLength},(_,i)=>'0x'+v.getUint8(i).toString(16).padStart(2,'0')).join(' ');
+  logDebug(`flags=${flags} (${flags.toString(2).padStart(8,'0')}) | ${is16bit?'UINT16':'UINT8'} | bpm=${bpm} | contact=${sensorContactSupported?sensorContactDetected?'yes':'no':'n/a'} | raw=[${raw}]`);
+  if (bpm === 0 || bpm > 250) {
+    if (sensorContactSupported && !sensorContactDetected) {
+      document.getElementById('val-hr').textContent = '–';
+      document.getElementById('badge-hr').textContent = 'NO CONTACT';
+      document.getElementById('badge-hr').className = 'metric-badge badge-out';
+    }
+    return; // skip invalid
+  }
   updateHeartRate(bpm);
 }
+// --- DEBUG LOG ---
+const _dbgLines = [];
+function logDebug(msg) {
+  const ts = new Date().toLocaleTimeString('en',{hour12:false});
+  _dbgLines.unshift('['+ts+'] '+msg);
+  if (_dbgLines.length > 12) _dbgLines.length = 12;
+  const el = document.getElementById('dbg-log');
+  if (el) el.textContent = _dbgLines.join('\n');
+}
+
 function onBLEDisconnect() {
   S.bleConnected=false;
   document.getElementById('btn-connect').classList.remove('connected');
