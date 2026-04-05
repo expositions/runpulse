@@ -451,7 +451,13 @@ input{font:inherit;color:inherit}
       <div class="summary-item"><div class="summary-val" id="sum-pace">–</div><div class="summary-lbl">Avg Pace</div></div>
       <div class="summary-item"><div class="summary-val" id="sum-hr">–</div><div class="summary-lbl">Avg HR</div></div>
     </div>
-    <button class="btn-dismiss" onclick="dismissSummary()">Done</button>
+    <div style="display:flex;gap:10px">
+      <button class="btn-dismiss" style="background:#fc4c02;color:#fff" onclick="exportTCX()">Export TCX</button>
+      <div style="display:flex;gap:10px">
+      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--text)" onclick="exportTCX()">Export TCX (Strava)</button>
+      <button class="btn-dismiss" onclick="dismissSummary()">Done</button>
+    </div>
+    </div>
   </div>
 </div>
 
@@ -470,7 +476,7 @@ const S = {
   pace: 0,
   avgPace: 0,
   elapsed: 0,
-  positions: [],
+  positions: [], trackpoints: [],
   watchId: null,
   gpsReady: false,
   bleDevice: null,
@@ -732,6 +738,10 @@ function startDemoLoop() {
     const t=Date.now();
     S.gpsReady=true;
     setDot('dot-gps','active');
+
+    // Save raw demo point
+    S.trackpoints.push({ lat:S.demoLat, lon:S.demoLon, alt: 520, t, hr: Math.round(S.demoBpm), dist: S.distance * 1000 });
+
     if(S.positions.length>0) {
       const prev=S.positions[S.positions.length-1];
       const d=haversine(prev.lat,prev.lon,S.demoLat,S.demoLon);
@@ -764,7 +774,7 @@ function handleStartPause() {
 function startSession() {
   S.status='running';
   S.distance=0; S.pace=0; S.avgPace=0; S.elapsed=0;
-  S.positions=[]; S.bpmHistory=[];
+  S.positions=[]; S.trackpoints=[]; S.bpmHistory=[];
   S.pausedElapsed=0; S.lastFeedbackT=0; S.lastFeedbackD=0;
   S.prevInHr=null; S.prevInPace=null;
   startTimer();
@@ -1089,6 +1099,92 @@ async function requestWakeLock() {
 document.addEventListener('visibilitychange',async()=>{
   if(document.visibilityState==='visible'&&S.status==='running') await requestWakeLock();
 });
+
+// ============================================================
+// EXPORT TO TCX (STRAVA NATIVE)
+// ============================================================
+function exportTCX() {
+  if (S.trackpoints.length === 0) {
+    showToast('No GPS data to export');
+    return;
+  }
+
+  const startTime = new Date(S.trackpoints[0].t).toISOString();
+  const totalTime = S.elapsed;
+  const totalDist = S.distance * 1000;
+
+  let tcx = `<?xml version="1.0" encoding="UTF-8"?>
+` +
+    `<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+` +
+    `  <Activities>
+` +
+    `    <Activity Sport="Running">
+` +
+    `      <Id>${startTime}</Id>
+` +
+    `      <Lap StartTime="${startTime}">
+` +
+    `        <TotalTimeSeconds>${totalTime}</TotalTimeSeconds>
+` +
+    `        <DistanceMeters>${totalDist.toFixed(1)}</DistanceMeters>
+` +
+    `        <Intensity>Active</Intensity>
+` +
+    `        <TriggerMethod>Manual</TriggerMethod>
+` +
+    `        <Track>
+`;
+
+  for (const pt of S.trackpoints) {
+    tcx += `          <Trackpoint>
+` +
+           `            <Time>${new Date(pt.t).toISOString()}</Time>
+` +
+           `            <Position>
+` +
+           `              <LatitudeDegrees>${pt.lat}</LatitudeDegrees>
+` +
+           `              <LongitudeDegrees>${pt.lon}</LongitudeDegrees>
+` +
+           `            </Position>
+`;
+    if (pt.alt !== null) tcx += `            <AltitudeMeters>${pt.alt}</AltitudeMeters>
+`;
+    tcx += `            <DistanceMeters>${pt.dist.toFixed(1)}</DistanceMeters>
+`;
+    if (pt.hr > 0) {
+      tcx += `            <HeartRateBpm>
+` +
+             `              <Value>${pt.hr}</Value>
+` +
+             `            </HeartRateBpm>
+`;
+    }
+    tcx += `          </Trackpoint>
+`;
+  }
+
+  tcx += `        </Track>
+` +
+         `      </Lap>
+` +
+         `    </Activity>
+` +
+         `  </Activities>
+` +
+         `</TrainingCenterDatabase>`;
+
+  const blob = new Blob([tcx], {type: 'application/vnd.garmin.tcx+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ts = startTime.replace(/[:.]/g, '-').slice(0, 19);
+  a.download = `RunPulse_${ts}.tcx`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('TCX Exported for Strava');
+}
 </script>
 </body>
 </html>
