@@ -604,6 +604,7 @@ function startTimer() {
     checkMusicZone();
     checkZoneWarnings();
     if(!S.isDemo) processGPSFix();
+    if(S.elapsed % 5 === 0) updateMediaSession();
   }, 1000);
 }
 function pauseTimer() { clearInterval(S.timerRef); S.timerRef=null; S.pausedElapsed=S.elapsed; }
@@ -950,6 +951,7 @@ function pauseSession() {
   document.getElementById('timer-label').textContent='PAUSED';
   document.getElementById('timer-val').classList.remove('running-color');
   pauseCurrentAudio();
+  updateMediaSession();
 }
 function resumeSession() {
   S.status='running';
@@ -958,6 +960,7 @@ function resumeSession() {
   setBtnState('running');
   document.getElementById('timer-label').textContent='RUNNING';
   document.getElementById('timer-val').classList.add('running-color');
+  updateMediaSession();
 }
 function handleStop() {
   if(S.status==='idle') return;
@@ -966,6 +969,7 @@ function handleStop() {
   S.status='stopped';
   pauseTimer(); stopDemoLoop(); stopGPS();
   stopKeepalive();
+  clearMediaSession();
   pauseCurrentAudio();
   setBtnState('idle');
   document.getElementById('timer-label').textContent='STOPPED';
@@ -1354,6 +1358,63 @@ function updateKeepaliveAudio() {
 function removeKeepaliveAudio() {
   const el = document.getElementById('keepalive-audio');
   if (el) { el.pause(); el.remove(); }
+}
+
+// ============================================================
+// MEDIA SESSION NOTIFICATION
+// ============================================================
+// Uses the Media Session API to show a persistent notification in
+// Android's notification shade while recording. This works because
+// we always have audio playing (either the silent keepalive or the
+// user's music). navigator.mediaSession is a singleton — one set
+// of metadata per page, shared by all audio sources.
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  if (S.status === 'running' || S.status === 'paused') {
+    const dist = S.distance.toFixed(2) + ' km';
+    const time = fmtTime(S.elapsed);
+    const paceStr = S.pace > 0 ? fmtPace(S.pace) + '/km' : '';
+    const hrStr = S.bpm > 0 ? S.bpm + ' bpm' : '';
+    const parts = [dist, time, paceStr, hrStr].filter(Boolean).join(' · ');
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: S.status === 'paused' ? 'RunPulse — Paused' : 'RunPulse — Recording',
+      artist: parts,
+      album: 'RunPulse',
+      // A small inline SVG as artwork isn't supported; use a data URI PNG.
+      // We generate a tiny 1x1 green pixel as a placeholder icon.
+      artwork: [{
+        src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#0b0d10"/><path d="M20 64 Q36 32 52 64 Q68 96 84 64 Q100 32 116 64" stroke="#10d4a0" stroke-width="8" stroke-linecap="round" fill="none"/><circle cx="116" cy="64" r="7" fill="#10d4a0"/></svg>'),
+        sizes: '128x128',
+        type: 'image/svg+xml',
+      }],
+    });
+
+    // Map media hardware buttons / notification controls to session actions
+    navigator.mediaSession.setActionHandler('play', () => {
+      if (S.status === 'paused') { resumeSession(); updateMediaSession(); }
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      if (S.status === 'running') { pauseSession(); updateMediaSession(); }
+    });
+    navigator.mediaSession.setActionHandler('stop', () => {
+      handleStop(); clearMediaSession();
+    });
+
+    navigator.mediaSession.playbackState = S.status === 'running' ? 'playing' : 'paused';
+  }
+}
+
+function clearMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = null;
+  navigator.mediaSession.playbackState = 'none';
+  try {
+    navigator.mediaSession.setActionHandler('play', null);
+    navigator.mediaSession.setActionHandler('pause', null);
+    navigator.mediaSession.setActionHandler('stop', null);
+  } catch(e) {}
 }
 
 // ============================================================
