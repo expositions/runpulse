@@ -936,6 +936,8 @@ function startSession() {
   startTimer();
   if(!S.isDemo) startGPS();
   else startDemoLoop();
+  startKeepalive();
+  requestWakeLock();
   setBtnState('running');
   document.getElementById('timer-label').textContent='RUNNING';
   document.getElementById('timer-val').classList.add('running-color');
@@ -963,6 +965,7 @@ function handleStop() {
   const avgHr = S.bpmHistory.length>0 ? Math.round(S.bpmHistory.reduce((a,b)=>a+b,0)/S.bpmHistory.length) : 0;
   S.status='stopped';
   pauseTimer(); stopDemoLoop(); stopGPS();
+  stopKeepalive();
   pauseCurrentAudio();
   setBtnState('idle');
   document.getElementById('timer-label').textContent='STOPPED';
@@ -1153,10 +1156,12 @@ function playTrack(idx) {
   S.currentAudio.play().catch(()=>{});
   S.isPlaying=true; S.userPaused=false;
   updateMusicPlayerUI(); renderPlaylist();
+  updateKeepaliveAudio(); // music now provides keepalive, remove silent audio
 }
 function pauseCurrentAudio() {
   if(S.currentAudio) S.currentAudio.pause();
   S.isPlaying=false; updateMusicPlayerUI();
+  updateKeepaliveAudio(); // music stopped, may need silent audio again
 }
 function resumeCurrentAudio() {
   if(S.currentAudio) { S.currentAudio.play().catch(()=>{}); S.isPlaying=true; }
@@ -1268,6 +1273,88 @@ async function requestWakeLock() {
 document.addEventListener('visibilitychange',async()=>{
   if(document.visibilityState==='visible'&&S.status==='running') await requestWakeLock();
 });
+
+// ============================================================
+// BACKGROUND KEEPALIVE (silent audio trick)
+// ============================================================
+// When the screen turns off, Chrome throttles timers and may pause
+// GPS/BLE. Playing a near-silent audio loop makes Chrome treat the
+// tab as "actively playing media", keeping it alive in the background.
+//
+// Two layers:
+//   1. Web Audio API oscillator (1Hz, gain 0.001) — always safe, no
+//      media session, no notification shade entry, doesn't interfere
+//      with the music player at all.
+//   2. Silent <audio> element — registers as media playback in
+//      Android's notification shade, giving the strongest keepalive.
+//      BUT: only used when music mode is NOT active, because the
+//      user's actual music already provides the same keepalive and
+//      a second <audio> could steal media focus or show a duplicate
+//      notification.
+let keepaliveOsc = null;
+let keepaliveCtx = null;
+
+function startKeepalive() {
+  if (keepaliveOsc) return;
+  try {
+    keepaliveCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = keepaliveCtx.createOscillator();
+    const gain = keepaliveCtx.createGain();
+    gain.gain.value = 0.001; // inaudible
+    osc.connect(gain);
+    gain.connect(keepaliveCtx.destination);
+    osc.frequency.value = 1; // 1Hz — below human hearing
+    osc.start();
+    keepaliveOsc = osc;
+  } catch(e) {
+    console.warn('Keepalive oscillator failed:', e);
+  }
+
+  // Silent <audio> only when music mode is off (no playlist playing)
+  updateKeepaliveAudio();
+}
+
+function stopKeepalive() {
+  if (keepaliveOsc) {
+    try { keepaliveOsc.stop(); } catch(e) {}
+    keepaliveOsc = null;
+  }
+  if (keepaliveCtx) {
+    try { keepaliveCtx.close(); } catch(e) {}
+    keepaliveCtx = null;
+  }
+  removeKeepaliveAudio();
+}
+
+function updateKeepaliveAudio() {
+  // If the user's music is playing, it already keeps the tab alive —
+  // don't add a competing <audio> that would mess with media session.
+  const musicActive = S.isPlaying && S.currentAudio && !S.currentAudio.paused;
+  const el = document.getElementById('keepalive-audio');
+
+  if (musicActive) {
+    // Music provides keepalive; remove silent audio if present
+    if (el) { el.pause(); el.remove(); }
+    return;
+  }
+
+  // No music playing — ensure silent audio is running
+  if (!el && S.status === 'running') {
+    const audio = document.createElement('audio');
+    audio.id = 'keepalive-audio';
+    audio.loop = true;
+    audio.volume = 0.01;
+    // Tiny WAV: 1 second of silence, 8kHz mono 8-bit
+    audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgACABAAZGF0YQAAAAA=';
+    document.body.appendChild(audio);
+    audio.play().catch(() => {});
+  }
+}
+
+function removeKeepaliveAudio() {
+  const el = document.getElementById('keepalive-audio');
+  if (el) { el.pause(); el.remove(); }
+}
 
 // ============================================================
 // HISTORY + EXPORT
