@@ -502,12 +502,12 @@ const Store = {
   addRun: function(runObj) {
     this.data.unshift(runObj);
     this.save();
-    renderHistory();
+    try { renderHistory(); } catch(e) { console.error(e); }
   },
   deleteRun: function(id) {
     this.data = this.data.filter(r => r.id !== id);
     this.save();
-    renderHistory();
+    try { renderHistory(); } catch(e) { console.error(e); }
   },
   getRun: function(id) {
     return this.data.find(r => r.id === id);
@@ -1201,21 +1201,18 @@ document.addEventListener('visibilitychange',async()=>{
 });
 
 // ============================================================
-// EXPORT TO TCX (STRAVA NATIVE)
+// HISTORY + EXPORT
 // ============================================================
-function exportCurrentTCX() {
-  if (S.trackpoints.length === 0) {
-    showToast('No GPS data to export');
-    return;
-  }
-
-  const startTime = new Date(S.trackpoints[0].t).toISOString();
-  const totalTime = S.elapsed;
-  const totalDist = S.distance * 1000;
+function generateTCX(runObj) {
+  const pts = runObj.trackpoints || [];
+  if (!pts.length) throw new Error('No trackpoints found for export.');
+  const startTime = new Date(pts[0].t).toISOString();
+  const totalTime = runObj.elapsed || 0;
+  let accumDist = 0;
 
   let tcx = `<?xml version="1.0" encoding="UTF-8"?>
 ` +
-    `<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+    `<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd">
 ` +
     `  <Activities>
 ` +
@@ -1227,7 +1224,7 @@ function exportCurrentTCX() {
 ` +
     `        <TotalTimeSeconds>${totalTime}</TotalTimeSeconds>
 ` +
-    `        <DistanceMeters>${totalDist.toFixed(1)}</DistanceMeters>
+    `        <DistanceMeters>${((runObj.distance || 0) * 1000).toFixed(1)}</DistanceMeters>
 ` +
     `        <Intensity>Active</Intensity>
 ` +
@@ -1236,29 +1233,36 @@ function exportCurrentTCX() {
     `        <Track>
 `;
 
-  for (const pt of S.trackpoints) {
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i];
+    if (i > 0) {
+      const prev = pts[i - 1];
+      accumDist += haversine(prev.lat, prev.lon, pt.lat, pt.lon) * 1000;
+    }
     tcx += `          <Trackpoint>
-` +
-           `            <Time>${new Date(pt.t).toISOString()}</Time>
-` +
-           `            <Position>
-` +
-           `              <LatitudeDegrees>${pt.lat}</LatitudeDegrees>
-` +
-           `              <LongitudeDegrees>${pt.lon}</LongitudeDegrees>
-` +
-           `            </Position>
 `;
-    if (pt.alt !== null) tcx += `            <AltitudeMeters>${pt.alt}</AltitudeMeters>
+    tcx += `            <Time>${new Date(pt.t).toISOString()}</Time>
 `;
-    tcx += `            <DistanceMeters>${pt.dist.toFixed(1)}</DistanceMeters>
+    tcx += `            <Position>
 `;
-    if (pt.hr > 0) {
+    tcx += `              <LatitudeDegrees>${Number(pt.lat).toFixed(6)}</LatitudeDegrees>
+`;
+    tcx += `              <LongitudeDegrees>${Number(pt.lon).toFixed(6)}</LongitudeDegrees>
+`;
+    tcx += `            </Position>
+`;
+    if (pt.alt !== null && pt.alt !== undefined && Number.isFinite(Number(pt.alt))) {
+      tcx += `            <AltitudeMeters>${Number(pt.alt).toFixed(1)}</AltitudeMeters>
+`;
+    }
+    tcx += `            <DistanceMeters>${accumDist.toFixed(1)}</DistanceMeters>
+`;
+    if (pt.hr && pt.hr > 0) {
       tcx += `            <HeartRateBpm>
-` +
-             `              <Value>${pt.hr}</Value>
-` +
-             `            </HeartRateBpm>
+`;
+      tcx += `              <Value>${Math.round(pt.hr)}</Value>
+`;
+      tcx += `            </HeartRateBpm>
 `;
     }
     tcx += `          </Trackpoint>
@@ -1274,17 +1278,120 @@ function exportCurrentTCX() {
          `  </Activities>
 ` +
          `</TrainingCenterDatabase>`;
+  return tcx;
+}
 
-  const blob = new Blob([tcx], {type: 'application/vnd.garmin.tcx+xml'});
-  const url = URL.createObjectURL(blob);
+function downloadTextFile(content, filename, mimeType) {
+  const file = new File([content], filename, { type: mimeType });
+
+  // Try native Web Share API first (perfect for Android Chrome)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({
+      files: [file],
+      title: filename
+    }).catch((err) => {
+      console.warn('Share canceled/failed, trying standard download...', err);
+      fallbackDownload(file, filename);
+    });
+  } else {
+    // Fallback to standard <a> download
+    fallbackDownload(file, filename);
+  }
+}
+
+function fallbackDownload(file, filename) {
+  const url = URL.createObjectURL(file);
   const a = document.createElement('a');
   a.href = url;
-  const ts = startTime.replace(/[:.]/g, '-').slice(0, 19);
-  a.download = `RunPulse_${ts}.tcx`;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-  showToast('TCX Exported for Strava');
+
+  // Android Download Manager needs time to fetch the blob before we revoke it!
+  // 500ms is often too fast and causes a silent failure. We use 15 seconds.
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 15000); 
 }
+
+function exportCurrentTCX() {
+  try {
+    if (!S.trackpoints || S.trackpoints.length === 0) throw new Error('No GPS data collected yet. Finish a run first.');
+    const runObj = {
+      elapsed: S.elapsed,
+      distance: S.distance,
+      avgPace: S.avgPace,
+      avgHr: S.bpmHistory.length ? Math.round(S.bpmHistory.reduce((a,b)=>a+b,0)/S.bpmHistory.length) : 0,
+      trackpoints: S.trackpoints
+    };
+    const tcx = generateTCX(runObj);
+    const ts = new Date(runObj.trackpoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadTextFile(tcx, `RunPulse_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+    
+    showToast('Export started');
+  } catch (err) {
+    console.error(err);
+    alert('Export failed: ' + err.message);
+    if (typeof logDebug === 'function') logDebug('Export failed: ' + err.message);
+  }
+}
+
+function exportHistoricalTCX(id) {
+  try {
+    const runObj = Store.getRun(id);
+    if (!runObj) throw new Error('Saved run not found.');
+    const tcx = generateTCX(runObj);
+    const ts = new Date(runObj.trackpoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadTextFile(tcx, `RunPulse_History_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+    
+    showToast('History export started');
+  } catch (err) {
+    console.error(err);
+    alert('Historical export failed: ' + err.message);
+    if (typeof logDebug === 'function') logDebug('Historical export failed: ' + err.message);
+  }
+}
+
+function renderHistory() {
+  const container = document.getElementById('history-items');
+  if (!container) return;
+  if (!Store.data.length) {
+    container.innerHTML = '<div style="padding:20px 0;color:var(--text-faint);font-size:0.82rem">No finished runs saved yet.</div>';
+    return;
+  }
+  container.innerHTML = Store.data.map(r => {
+    const dateStr = new Date(r.date).toLocaleString([], { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    return `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;margin-top:10px">
+        <div style="font-family:var(--font-num);font-size:0.9rem;color:var(--text);margin-bottom:6px">${dateStr}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">
+          <span>${(r.distance || 0).toFixed(2)} km</span>
+          <span>${fmtTime(r.elapsed || 0)}</span>
+          <span>${fmtPace(r.avgPace || 0)}/km</span>
+          <span>${r.avgHr || '–'} bpm</span>
+          <span>${(r.trackpoints || []).length} pts</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button style="flex:1;background:var(--surface-3);color:var(--text);padding:10px;border-radius:8px;border:1px solid var(--border);font-family:var(--font-num)" onclick="exportHistoricalTCX(${r.id})">Export TCX</button>
+          <button style="background:rgba(245,79,95,0.12);color:var(--red);padding:10px 12px;border-radius:8px;border:1px solid rgba(245,79,95,0.2);font-family:var(--font-num)" onclick="deleteHistoricalRun(${r.id})">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function deleteHistoricalRun(id) {
+  if (!confirm('Delete this saved run?')) return;
+  Store.deleteRun(id);
+  alert('Saved run deleted.');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  try { renderHistory(); }
+  catch (err) { console.error(err); alert('History failed to render: ' + err.message); }
+});
+
 </script>
 </body>
 </html>
