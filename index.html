@@ -275,6 +275,7 @@ input{font:inherit;color:inherit}
       <div class="demo-row">
         <span class="demo-hint">No HR monitor? Use demo mode to test.</span>
         <button class="btn-demo" id="btn-demo" onclick="toggleDemo()">DEMO</button>
+        <button class="btn-demo" id="btn-demo-bad" onclick="toggleDemo(true)" style="color:var(--amber);border-color:rgba(245,166,35,0.25)">BAD GPS</button>
       </div>
 
       <!-- DEBUG PANEL -->
@@ -355,7 +356,11 @@ input{font:inherit;color:inherit}
           <div><div class="setting-label">Every X km</div></div>
           <select class="select-input" id="feedback-dist" aria-label="Feedback distance interval">
             <option value="0">Off</option>
-            <option value="0.5">0.5 km</option>
+            <option value="0.1">100 m</option>
+            <option value="0.2">200 m</option>
+            <option value="0.3">300 m</option>
+            <option value="0.4">400 m</option>
+            <option value="0.5">500 m</option>
             <option value="1" selected>1 km</option>
             <option value="2">2 km</option>
             <option value="5">5 km</option>
@@ -464,9 +469,10 @@ input{font:inherit;color:inherit}
       <div class="summary-item"><div class="summary-val" id="sum-hr">–</div><div class="summary-lbl">Avg HR</div></div>
     
     </div>
-    <div style="display:flex;gap:10px">
-      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--text)" onclick="exportCurrentTCX()">Export TCX</button>
-      <button class="btn-dismiss" onclick="dismissSummary()">Done</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--text);flex:1" onclick="exportCurrentTCX()">Export TCX</button>
+      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--amber);border:1px solid rgba(245,166,35,0.25);flex:1" onclick="exportCurrentRawTCX()">Export Unfiltered TCX</button>
+      <button class="btn-dismiss" style="flex:1" onclick="dismissSummary()">Done</button>
     </div>
   </div>
 </div>
@@ -526,7 +532,7 @@ const S = {
   pace: 0,
   avgPace: 0,
   elapsed: 0,
-  positions: [], trackpoints: [],
+  positions: [], trackpoints: [], rawPoints: [],
   watchId: null,
   gpsReady: false, lastFix: null,
   bleDevice: null,
@@ -543,7 +549,7 @@ const S = {
   demoBpm: 148,
   demoLat: 48.1351,
   demoLon: 11.582,
-  demoDir: 45,
+  demoDir: 45, demoBadGps: false, demoTick: 0,
   musicEnabled: false,
   playlist: [],
   trackIdx: -1,
@@ -628,6 +634,9 @@ function startGPS() {
     pos => {
       if(S.status!=='running') return;
       const {latitude:lat, longitude:lon, accuracy, altitude} = pos.coords;
+
+      // Capture every fix unfiltered for raw export / TCX editor
+      S.rawPoints.push({ lat, lon, alt: altitude||null, t: pos.timestamp, accuracy, hr: S.bpm });
 
       // 1. Strict Accuracy Filter (<= 20m)
       if(accuracy > 20) {
@@ -794,52 +803,111 @@ function updateHeartRate(bpm) {
 // ============================================================
 // DEMO MODE
 // ============================================================
-function toggleDemo() {
-  S.isDemo = !S.isDemo;
-  const btn=document.getElementById('btn-demo');
-  if(S.isDemo) {
-    btn.classList.add('active');
-    btn.textContent='DEMO ON';
-    showToast('Demo mode active — simulated data');
-    if(S.status==='running') startDemoLoop();
+function toggleDemo(badGps) {
+  // If clicking the other demo button while one is active, switch modes
+  if (badGps !== undefined) {
+    if (S.isDemo && S.demoBadGps === !!badGps) {
+      // Same button clicked again — toggle off
+      S.isDemo = false;
+    } else {
+      // Turn on (or switch mode)
+      S.isDemo = true;
+      S.demoBadGps = !!badGps;
+    }
   } else {
-    btn.classList.remove('active');
-    btn.textContent='DEMO';
+    S.isDemo = !S.isDemo;
+    if (S.isDemo) S.demoBadGps = false;
+  }
+
+  const btn = document.getElementById('btn-demo');
+  const btnBad = document.getElementById('btn-demo-bad');
+  if (S.isDemo) {
+    if (S.demoBadGps) {
+      btnBad.classList.add('active'); btnBad.textContent = 'BAD GPS ON';
+      btn.classList.remove('active'); btn.textContent = 'DEMO';
+      showToast('Bad GPS demo — simulating spikes, drift, and jumps');
+    } else {
+      btn.classList.add('active'); btn.textContent = 'DEMO ON';
+      btnBad.classList.remove('active'); btnBad.textContent = 'BAD GPS';
+      showToast('Demo mode active — simulated data');
+    }
+    stopDemoLoop();
+    if (S.status === 'running') startDemoLoop();
+  } else {
+    btn.classList.remove('active'); btn.textContent = 'DEMO';
+    btnBad.classList.remove('active'); btnBad.textContent = 'BAD GPS';
     stopDemoLoop();
     showToast('Demo mode off');
   }
 }
+
 function startDemoLoop() {
   if(S.demoRef) return;
+  S.demoTick = 0;
   S.demoRef = setInterval(() => {
     if(S.status!=='running') return;
+    S.demoTick++;
+
+    // Heart rate (same for both modes)
     S.demoBpm += (Math.random()-0.48)*3;
     S.demoBpm = Math.max(100,Math.min(200,S.demoBpm));
     updateHeartRate(Math.round(S.demoBpm));
     setDot('dot-hr','active');
 
+    // Normal GPS movement
     const spd = 2.8+(Math.random()-0.5)*0.6;
     S.demoDir += (Math.random()-0.5)*8;
     const headRad=S.demoDir*Math.PI/180;
     S.demoLat += spd*Math.cos(headRad)/111000;
     S.demoLon += spd*Math.sin(headRad)/(111000*Math.cos(S.demoLat*Math.PI/180));
-    const t=Date.now();
-    S.gpsReady=true;
+
+    let ptLat = S.demoLat;
+    let ptLon = S.demoLon;
+
+    // ── BAD GPS INJECTION ──
+    if (S.demoBadGps) {
+      const tick = S.demoTick;
+
+      // Spike: ~8% chance — single point teleports 200-800m away
+      if (Math.random() < 0.08) {
+        const spikeD = (200 + Math.random() * 600) / 111000;
+        const spikeAngle = Math.random() * Math.PI * 2;
+        ptLat += spikeD * Math.cos(spikeAngle);
+        ptLon += spikeD * Math.sin(spikeAngle) / Math.cos(S.demoLat * Math.PI / 180);
+      }
+      // Stationary drift: every 50-70s, freeze real movement for 8-12s with tiny wiggles
+      else if (tick % 60 > 50) {
+        ptLat = S.demoLat + (Math.random() - 0.5) * 0.5 / 111000; // <1m wiggle
+        ptLon = S.demoLon + (Math.random() - 0.5) * 0.5 / (111000 * Math.cos(S.demoLat * Math.PI / 180));
+      }
+      // Block offset: at tick 25-30 and 80-85, shift track sideways for several points
+      else if ((tick % 100 >= 25 && tick % 100 <= 30) || (tick % 100 >= 80 && tick % 100 <= 85)) {
+        const offset = 150 / 111000; // ~150m sideways
+        ptLat += offset;
+        ptLon += offset / Math.cos(S.demoLat * Math.PI / 180);
+      }
+    }
+
+    const t = Date.now();
+    S.gpsReady = true;
     setDot('dot-gps','active');
 
-    // Save raw demo point
-    S.trackpoints.push({ lat:S.demoLat, lon:S.demoLon, alt: 520, t, hr: Math.round(S.demoBpm), dist: S.distance * 1000 });
+    // Raw points always get the (possibly corrupted) position
+    S.rawPoints.push({ lat: ptLat, lon: ptLon, alt: 520, t, accuracy: S.demoBadGps ? 5 + Math.random() * 80 : 5, hr: Math.round(S.demoBpm) });
+
+    // Trackpoints also get the raw point (demo doesn't filter)
+    S.trackpoints.push({ lat: ptLat, lon: ptLon, alt: 520, t, hr: Math.round(S.demoBpm), dist: S.distance * 1000 });
 
     if(S.positions.length>0) {
       const prev=S.positions[S.positions.length-1];
-      const d=haversine(prev.lat,prev.lon,S.demoLat,S.demoLon);
+      const d=haversine(prev.lat,prev.lon,ptLat,ptLon);
       if(d>0.002) {
         S.distance+=d;
-        S.positions.push({lat:S.demoLat,lon:S.demoLon,t});
+        S.positions.push({lat:ptLat,lon:ptLon,t});
         updateRollingPace();
       }
     } else {
-      S.positions.push({lat:S.demoLat,lon:S.demoLon,t:Date.now()});
+      S.positions.push({lat:ptLat,lon:ptLon,t:Date.now()});
     }
     updateMetricsUI();
   },1000);
@@ -862,7 +930,7 @@ function handleStartPause() {
 function startSession() {
   S.status='running';
   S.distance=0; S.pace=0; S.currentRunId=Date.now(); S.avgPace=0; S.elapsed=0;
-  S.positions=[]; S.trackpoints=[]; S.bpmHistory=[];
+  S.positions=[]; S.trackpoints=[]; S.rawPoints=[]; S.bpmHistory=[];
   S.pausedElapsed=0; S.lastFeedbackT=0; S.lastFeedbackD=0;
   S.prevInHr=null; S.prevInPace=null;
   startTimer();
@@ -908,7 +976,8 @@ function handleStop() {
       elapsed: prevElapsed,
       avgPace: prevAvgPace,
       avgHr: avgHr,
-      trackpoints: JSON.parse(JSON.stringify(S.trackpoints)) // deep copy
+      trackpoints: JSON.parse(JSON.stringify(S.trackpoints)), // deep copy
+      rawPoints: JSON.parse(JSON.stringify(S.rawPoints))       // unfiltered GPS fixes
     };
     Store.addRun(runObj);
   }
@@ -1329,12 +1398,39 @@ function exportCurrentTCX() {
     const tcx = generateTCX(runObj);
     const ts = new Date(runObj.trackpoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
     downloadTextFile(tcx, `RunPulse_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
-    
     showToast('Export started');
   } catch (err) {
     console.error(err);
     alert('Export failed: ' + err.message);
     if (typeof logDebug === 'function') logDebug('Export failed: ' + err.message);
+  }
+}
+
+function exportCurrentRawTCX() {
+  try {
+    const pts = S.rawPoints && S.rawPoints.length ? S.rawPoints : S.trackpoints;
+    if (!pts || pts.length === 0) throw new Error('No GPS data collected yet. Finish a run first.');
+    const runObj = {
+      elapsed: S.elapsed,
+      distance: S.distance,
+      avgPace: S.avgPace,
+      avgHr: S.bpmHistory.length ? Math.round(S.bpmHistory.reduce((a,b)=>a+b,0)/S.bpmHistory.length) : 0,
+      trackpoints: pts
+    };
+    const tcx = generateTCX(runObj);
+    const ts = new Date(pts[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadTextFile(tcx, `RunPulse_RAW_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+    showToast('Unfiltered export started — open TCX Editor to clean');
+    // Offer to open the TCX Editor
+    setTimeout(() => {
+      if (confirm('Open the GPS TCX Editor to review and clean this file before uploading to Strava?')) {
+        window.open('tcx-editor.html', '_blank');
+      }
+    }, 600);
+  } catch (err) {
+    console.error(err);
+    alert('Export failed: ' + err.message);
+    if (typeof logDebug === 'function') logDebug('Raw export failed: ' + err.message);
   }
 }
 
@@ -1345,12 +1441,33 @@ function exportHistoricalTCX(id) {
     const tcx = generateTCX(runObj);
     const ts = new Date(runObj.trackpoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
     downloadTextFile(tcx, `RunPulse_History_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
-    
     showToast('History export started');
   } catch (err) {
     console.error(err);
     alert('Historical export failed: ' + err.message);
     if (typeof logDebug === 'function') logDebug('Historical export failed: ' + err.message);
+  }
+}
+
+function exportHistoricalRawTCX(id) {
+  try {
+    const runObj = Store.getRun(id);
+    if (!runObj) throw new Error('Saved run not found.');
+    const pts = (runObj.rawPoints && runObj.rawPoints.length) ? runObj.rawPoints : runObj.trackpoints;
+    const rawObj = Object.assign({}, runObj, { trackpoints: pts });
+    const tcx = generateTCX(rawObj);
+    const ts = new Date(pts[0].t).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadTextFile(tcx, `RunPulse_RAW_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+    showToast('Unfiltered history export started — open TCX Editor to clean');
+    setTimeout(() => {
+      if (confirm('Open the GPS TCX Editor to review and clean this file before uploading to Strava?')) {
+        window.open('tcx-editor.html', '_blank');
+      }
+    }, 600);
+  } catch (err) {
+    console.error(err);
+    alert('Unfiltered export failed: ' + err.message);
+    if (typeof logDebug === 'function') logDebug('Raw history export failed: ' + err.message);
   }
 }
 
@@ -1373,8 +1490,9 @@ function renderHistory() {
           <span>${r.avgHr || '–'} bpm</span>
           <span>${(r.trackpoints || []).length} pts</span>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button style="flex:1;background:var(--surface-3);color:var(--text);padding:10px;border-radius:8px;border:1px solid var(--border);font-family:var(--font-num)" onclick="exportHistoricalTCX(${r.id})">Export TCX</button>
+          <button style="flex:1;background:var(--surface-3);color:var(--amber);padding:10px;border-radius:8px;border:1px solid rgba(245,166,35,0.25);font-family:var(--font-num)" onclick="exportHistoricalRawTCX(${r.id})">Export Unfiltered</button>
           <button style="background:rgba(245,79,95,0.12);color:var(--red);padding:10px 12px;border-radius:8px;border:1px solid rgba(245,79,95,0.2);font-family:var(--font-num)" onclick="deleteHistoricalRun(${r.id})">Delete</button>
         </div>
       </div>`;

@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RunPulse · GPS TCX Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d10;
+  --surface: #13161c;
+  --surface-2: #1b1f29;
+  --surface-3: #222736;
+  --border: rgba(255,255,255,0.07);
+  --text: #e4e7f0;
+  --text-muted: #6b7490;
+  --text-faint: #3d4257;
+  --green: #10d4a0;
+  --green-dim: rgba(16,212,160,0.12);
+  --amber: #f5a623;
+  --amber-dim: rgba(245,166,35,0.12);
+  --red: #f54f5f;
+  --red-dim: rgba(245,79,95,0.12);
+  --blue: #4a9eff;
+  --blue-dim: rgba(74,158,255,0.12);
+  --font-body: 'Barlow', sans-serif;
+  --font-num: 'Barlow Condensed', sans-serif;
+  --r: 12px;
+  --r-sm: 8px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);min-height:100vh}
+button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
+
+/* HEADER */
+.header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface)}
+.logo{display:flex;align-items:center;gap:8px;font-family:var(--font-num);font-weight:700;font-size:1.05rem;letter-spacing:0.02em;color:var(--text)}
+.header-sub{font-family:var(--font-num);font-size:0.78rem;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase;border-left:1px solid var(--border);padding-left:12px;margin-left:4px}
+
+/* UPLOAD */
+#upload-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 57px);padding:32px 20px;gap:20px}
+.upload-card{background:var(--surface);border:2px dashed rgba(255,255,255,0.1);border-radius:16px;padding:48px 40px;text-align:center;max-width:480px;width:100%;cursor:pointer;transition:border-color 0.2s,background 0.2s}
+.upload-card:hover,.upload-card.drag{border-color:rgba(16,212,160,0.4);background:var(--green-dim)}
+.upload-card h2{font-family:var(--font-num);font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:8px}
+.upload-card p{font-size:0.85rem;color:var(--text-muted);line-height:1.6}
+.upload-card .hint{font-size:0.75rem;color:var(--text-faint);margin-top:12px}
+.btn-upload{display:inline-block;margin-top:20px;padding:12px 28px;background:var(--green);color:#000;border-radius:var(--r);font-family:var(--font-num);font-weight:700;font-size:0.9rem;letter-spacing:0.06em;transition:background 0.2s}
+.btn-upload:hover{background:#0ec48f}
+
+/* MAIN EDITOR */
+#editor-screen{display:none;flex-direction:column}
+.editor-body{display:grid;grid-template-columns:1fr 420px;min-height:calc(100vh - 57px)}
+@media(max-width:900px){.editor-body{grid-template-columns:1fr;grid-template-rows:auto 1fr}}
+
+/* MAP PANEL */
+.map-panel{position:sticky;top:0;height:calc(100vh - 57px);display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border)}
+@media(max-width:900px){.map-panel{position:relative;height:340px;border-right:none;border-bottom:1px solid var(--border)}}
+.map-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.map-title{font-family:var(--font-num);font-size:0.72rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted)}
+.map-legend{display:flex;gap:12px}
+.legend-item{display:flex;align-items:center;gap:5px;font-family:var(--font-num);font-size:0.68rem;color:var(--text-muted);letter-spacing:0.04em}
+.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+#map-canvas{flex:1;width:100%;cursor:crosshair}
+
+/* STATS BAR */
+.stats-bar{display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0}
+.stat-cell{flex:1;padding:10px 14px;border-right:1px solid var(--border);text-align:center}
+.stat-cell:last-child{border-right:none}
+.stat-val{font-family:var(--font-num);font-size:1.1rem;font-weight:700;color:var(--text)}
+.stat-val.changed{color:var(--green)}
+.stat-val.worse{color:var(--red)}
+.stat-lbl{font-size:0.62rem;font-family:var(--font-num);letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-top:2px}
+
+/* RIGHT PANEL */
+.right-panel{overflow-y:auto;display:flex;flex-direction:column}
+.panel-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface);position:sticky;top:0;z-index:10}
+.panel-title{font-family:var(--font-num);font-size:0.72rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted)}
+.badge-count{background:var(--amber-dim);color:var(--amber);font-family:var(--font-num);font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:100px;letter-spacing:0.04em}
+.badge-count.zero{background:var(--green-dim);color:var(--green)}
+
+/* ANOMALY CARDS */
+.anomaly-list{padding:12px;display:flex;flex-direction:column;gap:10px;flex:1}
+.anomaly-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;transition:border-color 0.2s}
+.anomaly-card.accepted{border-color:rgba(16,212,160,0.3);opacity:0.6}
+.anomaly-card.rejected{opacity:0.4}
+.anomaly-card.highlighted{border-color:rgba(245,166,35,0.5);box-shadow:0 0 0 1px rgba(245,166,35,0.15)}
+.anomaly-card:hover{border-color:rgba(255,255,255,0.15)}
+.card-top{padding:12px 14px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.card-idx{font-family:var(--font-num);font-size:0.68rem;color:var(--text-faint);letter-spacing:0.06em;flex-shrink:0;margin-top:2px}
+.card-type{font-family:var(--font-num);font-size:0.78rem;font-weight:700;letter-spacing:0.04em}
+.type-spike{color:var(--red)}
+.type-jump{color:var(--amber)}
+.type-drift{color:var(--blue)}
+.card-desc{font-size:0.78rem;color:var(--text-muted);padding:6px 14px 0;line-height:1.5}
+
+/* MINI COMPARISON MAP */
+.card-maps{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 14px}
+.mini-map-wrap{display:flex;flex-direction:column;gap:4px}
+.mini-map-label{font-family:var(--font-num);font-size:0.62rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint)}
+.mini-map-canvas{width:100%;height:90px;border-radius:var(--r-sm);background:var(--bg);border:1px solid var(--border)}
+
+/* METRICS ROW */
+.card-metrics{display:flex;gap:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.cm-cell{flex:1;padding:8px 10px;border-right:1px solid var(--border);text-align:center}
+.cm-cell:last-child{border-right:none}
+.cm-val{font-family:var(--font-num);font-size:0.88rem;font-weight:700;color:var(--text)}
+.cm-lbl{font-size:0.58rem;font-family:var(--font-num);letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-top:1px}
+.cm-delta{font-family:var(--font-num);font-size:0.7rem;color:var(--green);margin-top:1px}
+.cm-delta.neg{color:var(--red)}
+
+/* ACTION BUTTONS */
+.card-actions{display:flex;gap:0}
+.card-btn{flex:1;padding:10px;font-family:var(--font-num);font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;transition:background 0.15s;border-right:1px solid var(--border)}
+.card-btn:last-child{border-right:none}
+.card-btn-accept{color:var(--green)}
+.card-btn-accept:hover{background:var(--green-dim)}
+.card-btn-accept.active{background:var(--green-dim)}
+.card-btn-reject{color:var(--text-muted)}
+.card-btn-reject:hover{background:var(--surface-2)}
+.card-btn-reject.active{background:var(--surface-2);color:var(--text-faint)}
+
+/* EXPORT BAR */
+.export-bar{padding:14px 16px;border-top:1px solid var(--border);display:flex;gap:8px;background:var(--surface);position:sticky;bottom:0}
+.btn-export{flex:1;height:46px;border-radius:var(--r);font-family:var(--font-num);font-weight:700;font-size:0.88rem;letter-spacing:0.06em;transition:background 0.2s}
+.btn-export-primary{background:var(--green);color:#000}
+.btn-export-primary:hover{background:#0ec48f}
+.btn-export-secondary{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
+.btn-export-secondary:hover{background:var(--surface-3);color:var(--text)}
+
+/* EMPTY STATE */
+.empty-state{padding:40px 20px;text-align:center;color:var(--text-faint);font-size:0.84rem;flex:1;display:flex;align-items:center;justify-content:center}
+
+/* ACCEPT ALL */
+.bulk-actions{display:flex;gap:8px;padding:0 12px 4px}
+.btn-bulk{padding:6px 12px;border-radius:100px;font-family:var(--font-num);font-size:0.72rem;letter-spacing:0.06em;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);transition:all 0.15s}
+.btn-bulk:hover{background:var(--surface-3);color:var(--text)}
+.btn-bulk.green{border-color:rgba(16,212,160,0.3);color:var(--green)}
+.btn-bulk.green:hover{background:var(--green-dim)}
+
+/* STRAVA SECTION */
+.strava-section{border-top:1px solid var(--border);background:var(--surface)}
+.strava-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none}
+.strava-header:hover{background:var(--surface-2)}
+.strava-title{font-family:var(--font-num);font-size:0.72rem;letter-spacing:0.1em;text-transform:uppercase;color:#fc4c02}
+.strava-toggle{font-size:0.72rem;color:var(--text-faint);font-family:var(--font-num)}
+.strava-body{display:none;flex-direction:column}
+.strava-body.open{display:flex}
+.strava-iframe-wrap{position:relative;width:100%;height:600px;background:var(--bg);overflow:hidden}
+.strava-iframe-wrap iframe{width:100%;height:100%;border:none}
+.strava-fallback{padding:20px 16px;text-align:center}
+.strava-fallback p{font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;line-height:1.5}
+.btn-strava{display:inline-block;padding:10px 24px;background:#fc4c02;color:#fff;border-radius:var(--r);font-family:var(--font-num);font-weight:700;font-size:0.85rem;letter-spacing:0.04em;text-decoration:none;transition:background 0.2s}
+.btn-strava:hover{background:#e04400}
+.strava-note{font-size:0.7rem;color:var(--text-faint);padding:8px 16px;line-height:1.5;border-top:1px solid var(--border)}
+
+/* STRAVA EXPORT BUTTON */
+.btn-export-strava{background:#fc4c02;color:#fff}
+.btn-export-strava:hover{background:#e04400}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">
+    <svg width="26" height="26" viewBox="0 0 28 28" fill="none">
+      <rect width="28" height="28" rx="7" fill="#10d4a0" opacity="0.12"/>
+      <path d="M5 14 Q8 8 11 14 Q14 20 17 14 Q20 8 23 14" stroke="#10d4a0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <circle cx="23" cy="14" r="2" fill="#10d4a0"/>
+    </svg>
+    RunPulse
+  </div>
+  <div class="header-sub">GPS TCX Editor</div>
+</header>
+
+<!-- UPLOAD SCREEN -->
+<div id="upload-screen">
+  <div class="upload-card" id="drop-zone" onclick="document.getElementById('file-input').click()">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" style="margin:0 auto 16px;color:var(--text-faint)">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/>
+    </svg>
+    <h2>Load TCX File</h2>
+    <p>Drop an <strong style="color:var(--amber)">Unfiltered TCX</strong> exported from RunPulse here, or click to browse.<br>The editor will detect GPS anomalies and let you correct them.</p>
+    <p class="hint">Export "Unfiltered TCX" from the RunPulse summary or history screen to get the raw GPS track.</p>
+    <span class="btn-upload">Choose File</span>
+    <input type="file" id="file-input" accept=".tcx,application/xml,text/xml" style="display:none">
+  </div>
+</div>
+
+<!-- EDITOR SCREEN -->
+<div id="editor-screen">
+
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="stat-cell">
+      <div class="stat-val" id="stat-pts-orig">—</div>
+      <div class="stat-lbl">Total Points</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val" id="stat-dist-orig">—</div>
+      <div class="stat-lbl">Orig Distance</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val" id="stat-dist-corr">—</div>
+      <div class="stat-lbl">Corrected</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val" id="stat-anomalies">—</div>
+      <div class="stat-lbl">Anomalies</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val" id="stat-accepted">0</div>
+      <div class="stat-lbl">Accepted Fixes</div>
+    </div>
+  </div>
+
+  <div class="editor-body">
+
+    <!-- MAP PANEL -->
+    <div class="map-panel">
+      <div class="map-header">
+        <span class="map-title">GPS Track</span>
+        <div class="map-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Corrected</div>
+          <div class="legend-dot" style="background:#4a9eff;width:10px;height:10px;border-radius:50%;flex-shrink:0"></div><span style="font-family:var(--font-num);font-size:0.68rem;color:var(--text-muted)">Original</span>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Anomaly</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Highlighted</div>
+        </div>
+      </div>
+      <canvas id="map-canvas"></canvas>
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="right-panel" id="right-panel">
+      <div class="panel-header">
+        <span class="panel-title">Detected Anomalies</span>
+        <span class="badge-count" id="anomaly-badge">0</span>
+      </div>
+      <div class="bulk-actions" id="bulk-actions" style="display:none;padding-top:10px">
+        <button class="btn-bulk green" onclick="acceptAll()">Accept All Fixes</button>
+        <button class="btn-bulk" onclick="rejectAll()">Reject All</button>
+        <button class="btn-bulk" onclick="acceptHighConfidence()">Accept High Confidence</button>
+      </div>
+      <div class="anomaly-list" id="anomaly-list">
+        <div class="empty-state">Load a TCX file to begin.</div>
+      </div>
+      <!-- STRAVA SECTION -->
+      <div class="strava-section" id="strava-section" style="display:none">
+        <div class="strava-header" onclick="toggleStrava()">
+          <span class="strava-title">Strava Upload</span>
+          <span class="strava-toggle" id="strava-toggle-label">Open</span>
+        </div>
+        <div class="strava-body" id="strava-body">
+          <div class="strava-iframe-wrap" id="strava-iframe-wrap">
+            <!-- iframe loaded on demand to avoid premature blocking -->
+          </div>
+          <div class="strava-fallback" id="strava-fallback" style="display:none">
+            <p>Strava blocked the embedded view (X-Frame-Options). Use this button to open Strava upload in a new browser tab instead.<br>Opening inside the browser prevents Android from redirecting to the Strava app.</p>
+            <a class="btn-strava" href="#" id="strava-link" onclick="openStravaTab(event)">Open Strava Upload in Browser</a>
+          </div>
+          <div class="strava-note">
+            Tip: Use "Export for Strava" below to get a cleaned file with 1Hz resampling, accuracy filtering, speed filtering, and drift removal — optimised for Strava's distance calculation. Then upload it here.
+          </div>
+        </div>
+      </div>
+
+      <div class="export-bar" id="export-bar" style="display:none">
+        <button class="btn-export btn-export-secondary" onclick="loadNewFile()">Load New</button>
+        <button class="btn-export btn-export-primary" onclick="exportCorrected()">Export Corrected</button>
+        <button class="btn-export btn-export-strava" onclick="exportForStrava()">Export for Strava</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+let allPoints = [];     // parsed from TCX
+let anomalies = [];     // detected anomaly objects
+let corrections = {};   // idx -> accepted/rejected/'pending'
+let highlightedAnomaly = null;
+
+// ============================================================
+// HAVERSINE
+// ============================================================
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, d2r = Math.PI / 180;
+  const dLat = (lat2 - lat1) * d2r, dLon = (lon2 - lon1) * d2r;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*d2r)*Math.cos(lat2*d2r)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.asin(Math.sqrt(a)); // meters
+}
+
+function totalDistance(pts) {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) d += haversine(pts[i-1].lat, pts[i-1].lon, pts[i].lat, pts[i].lon);
+  return d;
+}
+
+// ============================================================
+// TCX PARSER
+// ============================================================
+function parseTCX(xmlStr) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlStr, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('Invalid XML in TCX file.');
+  const tps = Array.from(doc.querySelectorAll('Trackpoint'));
+  if (!tps.length) throw new Error('No trackpoints found in file.');
+  const pts = [];
+  for (const tp of tps) {
+    const timeEl = tp.querySelector('Time');
+    const latEl  = tp.querySelector('LatitudeDegrees');
+    const lonEl  = tp.querySelector('LongitudeDegrees');
+    const altEl  = tp.querySelector('AltitudeMeters');
+    const hrEl   = tp.querySelector('HeartRateBpm Value');
+    if (!timeEl || !latEl || !lonEl) continue;
+    pts.push({
+      lat: parseFloat(latEl.textContent),
+      lon: parseFloat(lonEl.textContent),
+      alt: altEl ? parseFloat(altEl.textContent) : null,
+      t:   new Date(timeEl.textContent.trim()).getTime(),
+      hr:  hrEl ? parseInt(hrEl.textContent) : 0,
+    });
+  }
+  if (pts.length < 3) throw new Error('Need at least 3 trackpoints to analyse.');
+  // Sort by time, remove obviously invalid coords
+  return pts.filter(p => isFinite(p.lat) && isFinite(p.lon) && isFinite(p.t))
+            .sort((a,b) => a.t - b.t);
+}
+
+// ============================================================
+// ANOMALY DETECTION
+// ============================================================
+// Anomaly types:
+//  'spike'  – single point far off track, speed in AND out both high → remove it
+//  'jump'   – consecutive points suddenly elsewhere; only one leg fast → ambiguous
+//  'drift'  – many slow-speed wiggles adding phantom distance (stationary noise)
+
+const SPEED_WARN  = 5.0;  // m/s — max plausible running speed (~18 km/h)
+const SPEED_HARD  = 10.0; // m/s — definitely wrong for running (36 km/h)
+const DRIFT_DIST  = 1.5;  // meters — movement below this in short time = drift noise
+const DRIFT_TIME  = 5;    // seconds
+
+function detectAnomalies(pts) {
+  const found = [];
+  // Estimate median speed of run for relative thresholds
+  const speeds = [];
+  for (let i = 1; i < pts.length; i++) {
+    const d = haversine(pts[i-1].lat, pts[i-1].lon, pts[i].lat, pts[i].lon);
+    const dt = (pts[i].t - pts[i-1].t) / 1000;
+    if (dt > 0) speeds.push(d / dt);
+  }
+  speeds.sort((a,b) => a-b);
+  const medianSpeed = speeds[Math.floor(speeds.length / 2)] || 2;
+  const dynThreshold = Math.max(SPEED_WARN, medianSpeed * 3.5);
+
+  let i = 1;
+  while (i < pts.length - 1) {
+    const prev = pts[i-1], curr = pts[i], next = pts[i+1];
+    const dIn   = haversine(prev.lat, prev.lon, curr.lat, curr.lon);
+    const dOut  = haversine(curr.lat, curr.lon, next.lat, next.lon);
+    const dSkip = haversine(prev.lat, prev.lon, next.lat, next.lon);
+    const dtIn  = (curr.t - prev.t) / 1000;
+    const dtOut = (next.t - curr.t) / 1000;
+    if (dtIn <= 0 || dtOut <= 0) { i++; continue; }
+    const speedIn  = dIn  / dtIn;
+    const speedOut = dOut / dtOut;
+    const speedSkip = dSkip / (dtIn + dtOut);
+    const extraDist = dIn + dOut - dSkip; // phantom meters added by this spike
+
+    // ── SPIKE: both legs fast, but skipping this point would be fine ──
+    if (speedIn > dynThreshold && speedOut > dynThreshold && speedSkip < dynThreshold) {
+      const confidence = Math.min(
+        Math.min(speedIn, speedOut) / dynThreshold,
+        3.0
+      );
+      found.push({
+        type: 'spike',
+        idx: i,
+        speedIn: speedIn.toFixed(1),
+        speedOut: speedOut.toFixed(1),
+        speedKmhIn: (speedIn * 3.6).toFixed(1),
+        speedKmhOut: (speedOut * 3.6).toFixed(1),
+        dIn: dIn.toFixed(1),
+        dOut: dOut.toFixed(1),
+        dSkip: dSkip.toFixed(1),
+        extraDist: extraDist.toFixed(1),
+        confidence,
+        fix: 'remove',
+        time: new Date(curr.t).toLocaleTimeString([], {hour12:false}),
+      });
+      i++;
+      continue;
+    }
+
+    // ── MULTI-POINT BLOCK: look ahead for a jump-and-stay pattern ──
+    // If speedIn is very high but speedOut is OK, the track jumped here.
+    // Look for where it "comes back" (speedOut becomes high again).
+    if (speedIn > SPEED_HARD) {
+      // Find the end of the block: where returning speed is also high
+      let blockEnd = i;
+      for (let j = i; j < Math.min(i + 20, pts.length - 1); j++) {
+        const dJ = haversine(pts[j].lat, pts[j].lon, pts[j+1].lat, pts[j+1].lon);
+        const dtJ = (pts[j+1].t - pts[j].t) / 1000;
+        if (dtJ > 0 && dJ / dtJ > SPEED_HARD) { blockEnd = j; break; }
+      }
+      if (blockEnd > i) {
+        // Multi-point block anomaly [i .. blockEnd]
+        const dBlock = haversine(pts[i-1].lat, pts[i-1].lon, pts[blockEnd+1].lat, pts[blockEnd+1].lon);
+        const dtBlock = (pts[blockEnd+1].t - pts[i-1].t) / 1000;
+        let blockDist = 0;
+        for (let j = i-1; j <= blockEnd; j++) blockDist += haversine(pts[j].lat, pts[j].lon, pts[j+1].lat, pts[j+1].lon);
+        const extra = blockDist - dBlock;
+        found.push({
+          type: 'block',
+          idx: i,
+          idxEnd: blockEnd,
+          extraDist: Math.max(0, extra).toFixed(1),
+          speedKmhIn: (speedIn * 3.6).toFixed(1),
+          confidence: 2.0,
+          fix: 'remove_block',
+          time: new Date(curr.t).toLocaleTimeString([], {hour12:false}),
+          blockLen: blockEnd - i + 1,
+        });
+        i = blockEnd + 1;
+        continue;
+      }
+      // Single jump without clear return – flag as jump
+      found.push({
+        type: 'jump',
+        idx: i,
+        speedKmhIn: (speedIn * 3.6).toFixed(1),
+        extraDist: dIn.toFixed(1),
+        confidence: 1.2,
+        fix: 'interpolate',
+        time: new Date(curr.t).toLocaleTimeString([], {hour12:false}),
+      });
+    }
+
+    i++;
+  }
+
+  // ── DRIFT: consecutive near-stationary points adding noise ──
+  // Scan for runs of points with tiny displacement
+  let driftStart = -1;
+  let driftAccum = 0;
+  for (let j = 1; j < pts.length; j++) {
+    const d = haversine(pts[j-1].lat, pts[j-1].lon, pts[j].lat, pts[j].lon);
+    const dt = (pts[j].t - pts[j-1].t) / 1000;
+    if (d < DRIFT_DIST && dt < DRIFT_TIME) {
+      if (driftStart < 0) driftStart = j - 1;
+      driftAccum += d;
+    } else {
+      if (driftStart >= 0 && driftAccum > 5 && (j - driftStart) >= 5) {
+        // Only report if not already covered by a spike anomaly
+        const alreadyCovered = found.some(a => a.idx >= driftStart && a.idx <= j);
+        if (!alreadyCovered) {
+          found.push({
+            type: 'drift',
+            idx: driftStart,
+            idxEnd: j - 1,
+            extraDist: driftAccum.toFixed(1),
+            confidence: 0.8,
+            fix: 'remove_block',
+            time: new Date(pts[driftStart].t).toLocaleTimeString([], {hour12:false}),
+            blockLen: j - driftStart,
+          });
+        }
+      }
+      driftStart = -1;
+      driftAccum = 0;
+    }
+  }
+
+  return found;
+}
+
+// ============================================================
+// APPLY CORRECTIONS → produce corrected point array
+// ============================================================
+function buildCorrectedPoints() {
+  const skipSet = new Set();
+  for (const a of anomalies) {
+    if (corrections[a.idx] !== 'accepted') continue;
+    if (a.fix === 'remove' || a.fix === 'interpolate') {
+      skipSet.add(a.idx);
+    } else if (a.fix === 'remove_block') {
+      const end = a.idxEnd !== undefined ? a.idxEnd : a.idx;
+      for (let j = a.idx; j <= end; j++) skipSet.add(j);
+    }
+  }
+  return allPoints.filter((_, i) => !skipSet.has(i));
+}
+
+// ============================================================
+// STATS UPDATE
+// ============================================================
+function updateStats() {
+  const corrected = buildCorrectedPoints();
+  const origDist  = totalDistance(allPoints);
+  const corrDist  = totalDistance(corrected);
+  const accepted  = Object.values(corrections).filter(v => v === 'accepted').length;
+
+  document.getElementById('stat-pts-orig').textContent = allPoints.length;
+  document.getElementById('stat-dist-orig').textContent = (origDist / 1000).toFixed(3) + ' km';
+
+  const corrEl = document.getElementById('stat-dist-corr');
+  corrEl.textContent = (corrDist / 1000).toFixed(3) + ' km';
+  const diff = corrDist - origDist;
+  corrEl.className = 'stat-val' + (diff < -0.5 ? ' changed' : diff > 0.5 ? ' worse' : '');
+
+  document.getElementById('stat-accepted').textContent = accepted;
+  document.getElementById('stat-anomalies').textContent = anomalies.length;
+
+  const badge = document.getElementById('anomaly-badge');
+  const pending = anomalies.filter(a => !corrections[a.idx]).length;
+  badge.textContent = pending + ' pending';
+  badge.className = 'badge-count' + (pending === 0 ? ' zero' : '');
+
+  drawMap();
+}
+
+// ============================================================
+// MAP DRAWING
+// ============================================================
+function latLonToCanvas(lat, lon, bounds, w, h, pad) {
+  const x = pad + (lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * (w - 2*pad);
+  const y = pad + (bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat) * (h - 2*pad);
+  return [x, y];
+}
+
+function drawMap(focusIdx) {
+  const canvas = document.getElementById('map-canvas');
+  const w = canvas.offsetWidth, h = canvas.offsetHeight;
+  canvas.width  = w * window.devicePixelRatio;
+  canvas.height = h * window.devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  if (!allPoints.length) return;
+
+  const pad = 20;
+  const lats = allPoints.map(p => p.lat);
+  const lons = allPoints.map(p => p.lon);
+  const bounds = {
+    minLat: Math.min(...lats), maxLat: Math.max(...lats),
+    minLon: Math.min(...lons), maxLon: Math.max(...lons),
+  };
+  // Expand bounds slightly to avoid flat lines
+  const dLat = bounds.maxLat - bounds.minLat || 0.001;
+  const dLon = bounds.maxLon - bounds.minLon || 0.001;
+  bounds.minLat -= dLat * 0.05; bounds.maxLat += dLat * 0.05;
+  bounds.minLon -= dLon * 0.05; bounds.maxLon += dLon * 0.05;
+
+  // Correct aspect ratio (mercator approximation)
+  const latCenter = (bounds.minLat + bounds.maxLat) / 2;
+  const lonScale = Math.cos(latCenter * Math.PI / 180);
+  const rangeY = bounds.maxLat - bounds.minLat;
+  const rangeX = (bounds.maxLon - bounds.minLon) * lonScale;
+  if (rangeX > 0 && rangeY > 0) {
+    const mapW = w - 2 * pad, mapH = h - 2 * pad;
+    if (rangeX / rangeY > mapW / mapH) {
+      // wider than tall: expand lat range
+      const excess = (rangeX / rangeY - mapW / mapH) * rangeY / 2;
+      bounds.minLat -= excess; bounds.maxLat += excess;
+    } else {
+      const excess = (rangeY / rangeX - mapH / mapW) * rangeX / lonScale / 2;
+      bounds.minLon -= excess; bounds.maxLon += excess;
+    }
+  }
+
+  function toXY(lat, lon) { return latLonToCanvas(lat, lon, bounds, w, h, pad); }
+
+  // Background
+  ctx.fillStyle = '#0d1018';
+  ctx.fillRect(0, 0, w, h);
+
+  // Collect anomaly indices for quick lookup
+  const anomalySet = new Set();
+  const acceptedSet = new Set();
+  for (const a of anomalies) {
+    const end = a.idxEnd !== undefined ? a.idxEnd : a.idx;
+    for (let j = a.idx; j <= end; j++) {
+      anomalySet.add(j);
+      if (corrections[a.idx] === 'accepted') acceptedSet.add(j);
+    }
+  }
+
+  // Highlighted anomaly points
+  const highlightSet = new Set();
+  if (highlightedAnomaly !== null) {
+    const a = anomalies[highlightedAnomaly];
+    if (a) {
+      const end = a.idxEnd !== undefined ? a.idxEnd : a.idx;
+      for (let j = Math.max(0, a.idx - 2); j <= Math.min(allPoints.length - 1, end + 2); j++) {
+        highlightSet.add(j);
+      }
+    }
+  }
+
+  // Draw original track (faint blue)
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(74,158,255,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < allPoints.length; i++) {
+    const [x, y] = toXY(allPoints[i].lat, allPoints[i].lon);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Draw corrected track (green)
+  const corrPts = buildCorrectedPoints();
+  if (corrPts.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = '#10d4a0';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < corrPts.length; i++) {
+      const [x, y] = toXY(corrPts[i].lat, corrPts[i].lon);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Draw anomaly points (red dots)
+  for (const idx of anomalySet) {
+    if (idx >= allPoints.length) continue;
+    if (acceptedSet.has(idx)) continue; // accepted = no longer shown as problem
+    const [x, y] = toXY(allPoints[idx].lat, allPoints[idx].lon);
+    ctx.beginPath();
+    ctx.arc(x, y, highlightSet.has(idx) ? 6 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = highlightSet.has(idx) ? '#f5a623' : 'rgba(245,79,95,0.8)';
+    ctx.fill();
+  }
+
+  // Start / end markers
+  if (allPoints.length) {
+    const [sx, sy] = toXY(allPoints[0].lat, allPoints[0].lon);
+    ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI*2);
+    ctx.fillStyle = '#10d4a0'; ctx.fill();
+    const [ex, ey] = toXY(allPoints[allPoints.length-1].lat, allPoints[allPoints.length-1].lon);
+    ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI*2);
+    ctx.fillStyle = '#f54f5f'; ctx.fill();
+  }
+}
+
+// ============================================================
+// MINI MAP for anomaly cards
+// ============================================================
+function drawMiniMap(canvas, pts, highlightIdxs, color) {
+  if (!pts || pts.length < 2) return;
+  const w = canvas.offsetWidth || 160, h = canvas.offsetHeight || 90;
+  canvas.width  = w * window.devicePixelRatio;
+  canvas.height = h * window.devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const pad = 10;
+
+  const lats = pts.map(p => p.lat);
+  const lons = pts.map(p => p.lon);
+  let minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  let minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const dLat = maxLat - minLat || 0.0001;
+  const dLon = maxLon - minLon || 0.0001;
+  minLat -= dLat * 0.2; maxLat += dLat * 0.2;
+  minLon -= dLon * 0.2; maxLon += dLon * 0.2;
+
+  function toXY(lat, lon) {
+    const x = pad + (lon - minLon) / (maxLon - minLon) * (w - 2*pad);
+    const y = pad + (maxLat - lat) / (maxLat - minLat) * (h - 2*pad);
+    return [x, y];
+  }
+
+  ctx.fillStyle = '#0b0d10';
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.beginPath();
+  ctx.strokeStyle = color || '#4a9eff';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  for (let i = 0; i < pts.length; i++) {
+    const [x, y] = toXY(pts[i].lat, pts[i].lon);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  for (const idx of (highlightIdxs || [])) {
+    if (idx >= pts.length) continue;
+    const [x, y] = toXY(pts[idx].lat, pts[idx].lon);
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2);
+    ctx.fillStyle = '#f54f5f'; ctx.fill();
+  }
+}
+
+// ============================================================
+// RENDER ANOMALY CARDS
+// ============================================================
+function typeLabel(type) {
+  return {spike:'GPS Spike',jump:'GPS Jump',block:'Block Offset',drift:'Stationary Drift'}[type] || type;
+}
+function typeClass(type) {
+  return {spike:'type-spike',jump:'type-jump',block:'type-jump',drift:'type-drift'}[type] || '';
+}
+
+function description(a) {
+  switch(a.type) {
+    case 'spike':
+      return `Point #${a.idx} jumps ${a.dIn}m away from track at ${a.speedKmhIn} km/h, then immediately returns at ${a.speedKmhOut} km/h. Maximum realistic running speed is ~${(SPEED_WARN*3.6).toFixed0()}km/h. This adds <strong>${a.extraDist}m</strong> of phantom distance. Fix: remove this point.`;
+    case 'jump':
+      return `Point #${a.idx} represents an instantaneous movement of ${a.extraDist}m (${a.speedKmhIn} km/h). The track does not return, suggesting GPS caught up after signal loss. Fix: interpolate position.`;
+    case 'block':
+      return `Points #${a.idx}–${a.idxEnd} (${a.blockLen} consecutive points) are displaced from the expected path at ${a.speedKmhIn} km/h entry speed, adding ~${a.extraDist}m. Fix: remove this block.`;
+    case 'drift':
+      return `Points #${a.idx}–${a.idxEnd} (${a.blockLen} points) show stationary GPS noise accumulating ${a.extraDist}m of phantom distance without real movement.`;
+    default:
+      return `Anomaly at point #${a.idx}.`;
+  }
+}
+
+// ── confidence bar ──
+function confidenceBar(c) {
+  const pct = Math.min(100, (c / 3) * 100);
+  const col = c >= 2 ? 'var(--red)' : c >= 1 ? 'var(--amber)' : 'var(--blue)';
+  return `<div style="height:3px;background:var(--surface-3);border-radius:2px;margin:0 14px 10px;overflow:hidden">
+    <div style="height:100%;width:${pct.toFixed(0)}%;background:${col};border-radius:2px;transition:width 0.3s"></div></div>
+  <div style="padding:0 14px;font-size:0.64rem;font-family:var(--font-num);color:var(--text-faint);margin-top:-6px;margin-bottom:8px">
+    CONFIDENCE: ${c >= 2 ? 'HIGH' : c >= 1 ? 'MEDIUM' : 'LOW'}
+  </div>`;
+}
+
+function renderAnomalyCards() {
+  const list = document.getElementById('anomaly-list');
+  const bulk = document.getElementById('bulk-actions');
+  if (!anomalies.length) {
+    list.innerHTML = '<div class="empty-state">No GPS anomalies detected. Track looks clean!</div>';
+    bulk.style.display = 'none';
+    return;
+  }
+  bulk.style.display = 'flex';
+  list.innerHTML = '';
+
+  anomalies.forEach((a, cardIdx) => {
+    const card = document.createElement('div');
+    card.className = 'anomaly-card';
+    card.id = 'acard-' + cardIdx;
+
+    // Context points for mini maps (5 points before/after)
+    const ctxStart = Math.max(0, a.idx - 4);
+    const ctxEnd   = Math.min(allPoints.length - 1, (a.idxEnd || a.idx) + 4);
+    const ctxPts   = allPoints.slice(ctxStart, ctxEnd + 1);
+    const anomalyLocal = Array.from({length: (a.idxEnd||a.idx) - a.idx + 1}, (_, i) => a.idx - ctxStart + i);
+
+    // Corrected context: remove anomaly points
+    const corrCtxPts = ctxPts.filter((_, i) => {
+      const globalIdx = ctxStart + i;
+      if (a.fix === 'remove' || a.fix === 'interpolate') return globalIdx !== a.idx;
+      if (a.fix === 'remove_block') {
+        const end = a.idxEnd !== undefined ? a.idxEnd : a.idx;
+        return globalIdx < a.idx || globalIdx > end;
+      }
+      return true;
+    });
+
+    const deltaSign = parseFloat(a.extraDist) > 0 ? '-' : '+';
+    const state = corrections[a.idx];
+
+    card.innerHTML = `
+      <div class="card-top">
+        <div>
+          <div class="card-type ${typeClass(a.type)}">${typeLabel(a.type)}</div>
+        </div>
+        <div class="card-idx">PT #${a.idx} · ${a.time}</div>
+      </div>
+      <div class="card-desc">${description(a)}</div>
+      ${confidenceBar(a.confidence)}
+      <div class="card-maps">
+        <div class="mini-map-wrap">
+          <div class="mini-map-label">Original</div>
+          <canvas class="mini-map-canvas" id="mini-orig-${cardIdx}"></canvas>
+        </div>
+        <div class="mini-map-wrap">
+          <div class="mini-map-label">After fix</div>
+          <canvas class="mini-map-canvas" id="mini-corr-${cardIdx}"></canvas>
+        </div>
+      </div>
+      <div class="card-metrics">
+        <div class="cm-cell">
+          <div class="cm-val">${a.extraDist}m</div>
+          <div class="cm-lbl">Phantom Dist</div>
+          <div class="cm-delta">${deltaSign}${a.extraDist}m if fixed</div>
+        </div>
+        <div class="cm-cell">
+          <div class="cm-val">${a.speedKmhIn || a.speedKmhOut || '?'} km/h</div>
+          <div class="cm-lbl">Peak Speed</div>
+          <div class="cm-delta" style="color:var(--text-faint)">→ ~0 if fixed</div>
+        </div>
+        <div class="cm-cell">
+          <div class="cm-val">${a.fix === 'remove_block' ? (a.blockLen || 1) + ' pts' : '1 pt'}</div>
+          <div class="cm-lbl">Points removed</div>
+          <div class="cm-delta" style="color:var(--text-faint)">time preserved</div>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="card-btn card-btn-accept ${state==='accepted'?'active':''}" onclick="setCorrection(${cardIdx}, 'accepted')">
+          ${state==='accepted' ? '✓ Accepted' : 'Accept Fix'}
+        </button>
+        <button class="card-btn card-btn-reject ${state==='rejected'?'active':''}" onclick="setCorrection(${cardIdx}, 'rejected')">
+          ${state==='rejected' ? '✗ Rejected' : 'Reject'}
+        </button>
+      </div>`;
+
+    if (state === 'accepted') card.classList.add('accepted');
+    if (state === 'rejected') card.classList.add('rejected');
+
+    card.addEventListener('mouseenter', () => { highlightedAnomaly = cardIdx; drawMap(); });
+    card.addEventListener('mouseleave', () => { highlightedAnomaly = null; drawMap(); });
+
+    list.appendChild(card);
+
+    // Draw mini maps after DOM insertion
+    requestAnimationFrame(() => {
+      const origCanvas = document.getElementById('mini-orig-' + cardIdx);
+      const corrCanvas = document.getElementById('mini-corr-' + cardIdx);
+      if (origCanvas) drawMiniMap(origCanvas, ctxPts, anomalyLocal, '#4a9eff');
+      if (corrCanvas) drawMiniMap(corrCanvas, corrCtxPts.length > 1 ? corrCtxPts : ctxPts, [], '#10d4a0');
+    });
+  });
+}
+
+// ============================================================
+// CORRECTION ACTIONS
+// ============================================================
+function setCorrection(cardIdx, state) {
+  const a = anomalies[cardIdx];
+  corrections[a.idx] = (corrections[a.idx] === state) ? undefined : state;
+  renderAnomalyCards();
+  updateStats();
+}
+
+function acceptAll() {
+  anomalies.forEach(a => { corrections[a.idx] = 'accepted'; });
+  renderAnomalyCards(); updateStats();
+}
+function rejectAll() {
+  anomalies.forEach(a => { corrections[a.idx] = 'rejected'; });
+  renderAnomalyCards(); updateStats();
+}
+function acceptHighConfidence() {
+  anomalies.forEach(a => {
+    if (a.confidence >= 1.5) corrections[a.idx] = 'accepted';
+  });
+  renderAnomalyCards(); updateStats();
+}
+
+// ============================================================
+// TCX EXPORT
+// ============================================================
+function buildTCX(pts, origMeta) {
+  if (!pts.length) throw new Error('No points.');
+  const startTime = new Date(pts[0].t).toISOString();
+  let dist = 0;
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>${startTime}</Id>
+      <Lap StartTime="${startTime}">
+        <TotalTimeSeconds>${origMeta.totalTime}</TotalTimeSeconds>
+        <DistanceMeters>${(totalDistance(pts)).toFixed(1)}</DistanceMeters>
+        <Intensity>Active</Intensity>
+        <TriggerMethod>Manual</TriggerMethod>
+        <Track>\n`;
+
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i];
+    if (i > 0) dist += haversine(pts[i-1].lat, pts[i-1].lon, pt.lat, pt.lon);
+    xml += `          <Trackpoint>
+            <Time>${new Date(pt.t).toISOString()}</Time>
+            <Position>
+              <LatitudeDegrees>${pt.lat.toFixed(6)}</LatitudeDegrees>
+              <LongitudeDegrees>${pt.lon.toFixed(6)}</LongitudeDegrees>
+            </Position>\n`;
+    if (pt.alt !== null && pt.alt !== undefined && isFinite(pt.alt))
+      xml += `            <AltitudeMeters>${pt.alt.toFixed(1)}</AltitudeMeters>\n`;
+    xml += `            <DistanceMeters>${dist.toFixed(1)}</DistanceMeters>\n`;
+    if (pt.hr && pt.hr > 0)
+      xml += `            <HeartRateBpm><Value>${Math.round(pt.hr)}</Value></HeartRateBpm>\n`;
+    xml += `          </Trackpoint>\n`;
+  }
+  xml += `        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>`;
+  return xml;
+}
+
+function exportCorrected() {
+  try {
+    const corrPts = buildCorrectedPoints();
+    const meta = { totalTime: Math.round((allPoints[allPoints.length-1].t - allPoints[0].t) / 1000) };
+    const tcx = buildTCX(corrPts, meta);
+    const ts = new Date(allPoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0,19);
+    downloadFile(tcx, `RunPulse_Corrected_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+  } catch(e) {
+    alert('Export failed: ' + e.message);
+  }
+}
+
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], {type: mime});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 15000);
+}
+
+// ============================================================
+// LOAD FILE
+// ============================================================
+function loadTCX(xmlStr) {
+  try {
+    allPoints   = parseTCX(xmlStr);
+    anomalies   = detectAnomalies(allPoints);
+    corrections = {};
+
+    document.getElementById('upload-screen').style.display  = 'none';
+    document.getElementById('editor-screen').style.display  = 'flex';
+    document.getElementById('editor-screen').style.flexDirection = 'column';
+    document.getElementById('export-bar').style.display     = 'flex';
+    document.getElementById('bulk-actions').style.display   = 'flex';
+    document.getElementById('strava-section').style.display = 'block';
+
+    renderAnomalyCards();
+    updateStats();
+
+    // Draw map after layout
+    requestAnimationFrame(() => {
+      const canvas = document.getElementById('map-canvas');
+      canvas.width  = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+      drawMap();
+    });
+  } catch(e) {
+    alert('Failed to load file: ' + e.message);
+  }
+}
+
+function loadNewFile() {
+  document.getElementById('upload-screen').style.display  = 'flex';
+  document.getElementById('editor-screen').style.display  = 'none';
+  document.getElementById('strava-section').style.display = 'none';
+  allPoints = []; anomalies = []; corrections = {};
+  stravaLoaded = false;
+}
+
+// ============================================================
+// FILE INPUT / DRAG-DROP
+// ============================================================
+document.getElementById('file-input').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => loadTCX(ev.target.result);
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => loadTCX(ev.target.result);
+  reader.readAsText(f);
+});
+
+// Redraw map on resize
+window.addEventListener('resize', () => { if (allPoints.length) drawMap(); });
+
+// Polyfill for Number.prototype.toFixed0
+Number.prototype.toFixed0 = function() { return Math.round(this).toString(); };
+
+// ============================================================
+// STRAVA IFRAME
+// ============================================================
+// We load strava.com/upload in an iframe with "request desktop site"
+// achieved by forcing the iframe. If Strava blocks it via X-Frame-Options
+// (which it likely does), we detect the error and show a fallback button
+// that opens it in a new browser tab — still preventing the Android
+// Strava app from intercepting the navigation.
+
+let stravaLoaded = false;
+
+function toggleStrava() {
+  const body = document.getElementById('strava-body');
+  const label = document.getElementById('strava-toggle-label');
+  const isOpen = body.classList.toggle('open');
+  label.textContent = isOpen ? 'Close' : 'Open';
+  if (isOpen && !stravaLoaded) loadStravaIframe();
+}
+
+function loadStravaIframe() {
+  stravaLoaded = true;
+  const wrap = document.getElementById('strava-iframe-wrap');
+  const fallback = document.getElementById('strava-fallback');
+
+  const iframe = document.createElement('iframe');
+  // Force desktop mode by not sending mobile viewport — the iframe itself
+  // acts as a desktop-width container. We also set a title for a11y.
+  iframe.title = 'Strava Upload';
+  iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox');
+  iframe.src = 'https://www.strava.com/upload/select';
+
+  // Detect if Strava blocks the iframe
+  iframe.addEventListener('load', () => {
+    // If Strava served X-Frame-Options: DENY, the iframe will load but
+    // contentDocument will be null / cross-origin blocked. We can't reliably
+    // detect this, so we use a timeout heuristic: check if the iframe has
+    // painted any content.
+    setTimeout(() => {
+      try {
+        // Attempt to access — will throw if cross-origin (which is expected)
+        // but if the frame is blank/error page, we show fallback
+        const doc = iframe.contentDocument || iframe.contentWindow.document;
+        if (!doc || !doc.body || doc.body.innerHTML.length < 50) throw new Error('blocked');
+      } catch(e) {
+        // Most likely X-Frame-Options blocked it — show fallback
+        wrap.style.display = 'none';
+        fallback.style.display = 'block';
+      }
+    }, 3000);
+  });
+
+  iframe.addEventListener('error', () => {
+    wrap.style.display = 'none';
+    fallback.style.display = 'block';
+  });
+
+  wrap.innerHTML = '';
+  wrap.appendChild(iframe);
+}
+
+function openStravaTab(e) {
+  e.preventDefault();
+  // Using window.open keeps navigation inside the browser on Android,
+  // preventing the OS from intercepting and opening the Strava app.
+  // The '_blank' target with noopener ensures a clean browser tab.
+  window.open('https://www.strava.com/upload/select', '_blank', 'noopener,noreferrer');
+}
+
+// ============================================================
+// STRAVA-OPTIMIZED EXPORT
+// ============================================================
+// Applies the full cleaning pipeline documented for best Strava compatibility:
+//   1. Remove anomaly points (accepted corrections)
+//   2. Speed filter: reject >10 m/s (36 km/h)
+//   3. Stationary drift filter: skip <1.5m at <0.5 m/s
+//   4. 1Hz resampling: at most one point per second-bucket
+//   5. Cumulative DistanceMeters in each trackpoint (already in buildTCX)
+// Strava trusts the DistanceMeters stream from TCX files (Device First).
+// Strava's own recalculation under-smooths wiggles, so we pre-clean.
+
+function buildStravaPoints() {
+  const STRAVA_SPEED_MAX = 10;     // m/s — reject impossible jumps
+  const STRAVA_DRIFT_DIST = 1.5;   // m — ignore tiny wiggles
+  const STRAVA_DRIFT_SPEED = 0.5;  // m/s — below this = stationary
+
+  // Start from corrected points (anomaly fixes applied)
+  let pts = buildCorrectedPoints();
+  if (pts.length < 2) return pts;
+
+  // Pass 1: Speed filter — remove points that imply >10 m/s from previous kept point
+  const speedFiltered = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const prev = speedFiltered[speedFiltered.length - 1];
+    const d = haversine(prev.lat, prev.lon, pts[i].lat, pts[i].lon);
+    const dt = (pts[i].t - prev.t) / 1000;
+    if (dt <= 0) continue;
+    const speed = d / dt;
+    if (speed > STRAVA_SPEED_MAX) continue; // drop impossible jump
+    speedFiltered.push(pts[i]);
+  }
+
+  // Pass 2: Stationary drift filter — skip micro-movements at near-zero speed
+  const driftFiltered = [speedFiltered[0]];
+  for (let i = 1; i < speedFiltered.length; i++) {
+    const prev = driftFiltered[driftFiltered.length - 1];
+    const d = haversine(prev.lat, prev.lon, speedFiltered[i].lat, speedFiltered[i].lon);
+    const dt = (speedFiltered[i].t - prev.t) / 1000;
+    if (dt <= 0) continue;
+    const speed = d / dt;
+    if (d < STRAVA_DRIFT_DIST && speed < STRAVA_DRIFT_SPEED) continue; // skip drift
+    driftFiltered.push(speedFiltered[i]);
+  }
+
+  // Pass 3: 1Hz resampling — keep at most one point per second-bucket
+  // If multiple points fall in the same second, keep the last one (freshest fix)
+  const oneHz = [];
+  let lastSecond = -1;
+  for (const pt of driftFiltered) {
+    const sec = Math.floor(pt.t / 1000);
+    if (sec === lastSecond) {
+      oneHz[oneHz.length - 1] = pt; // replace with later point in same second
+    } else {
+      oneHz.push(pt);
+      lastSecond = sec;
+    }
+  }
+
+  return oneHz;
+}
+
+function exportForStrava() {
+  try {
+    const stravaPts = buildStravaPoints();
+    if (stravaPts.length < 2) throw new Error('Not enough valid points after Strava cleaning.');
+    const meta = { totalTime: Math.round((allPoints[allPoints.length-1].t - allPoints[0].t) / 1000) };
+    const tcx = buildTCX(stravaPts, meta);
+    const ts = new Date(allPoints[0].t).toISOString().replace(/[:.]/g, '-').slice(0,19);
+    downloadFile(tcx, `RunPulse_Strava_${ts}.tcx`, 'application/vnd.garmin.tcx+xml');
+
+    const origDist = totalDistance(allPoints);
+    const stravaDist = totalDistance(stravaPts);
+    const diff = ((stravaDist - origDist) / 1000).toFixed(3);
+    const sign = diff >= 0 ? '+' : '';
+    alert(`Strava-ready TCX exported!\n\nPoints: ${allPoints.length} → ${stravaPts.length}\nDistance: ${(origDist/1000).toFixed(3)} km → ${(stravaDist/1000).toFixed(3)} km (${sign}${diff} km)\n\nFilters applied:\n  • Anomaly corrections (accepted fixes)\n  • Speed filter (>10 m/s removed)\n  • Stationary drift filter (<1.5m removed)\n  • 1Hz resampling`);
+  } catch(e) {
+    alert('Strava export failed: ' + e.message);
+  }
+}
+
+</script>
+</body>
+</html>
