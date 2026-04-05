@@ -478,7 +478,7 @@ const S = {
   elapsed: 0,
   positions: [], trackpoints: [],
   watchId: null,
-  gpsReady: false,
+  gpsReady: false, lastFix: null,
   bleDevice: null,
   bleConnected: false,
   timerRef: null,
@@ -547,6 +547,7 @@ function startTimer() {
     checkFeedback();
     checkMusicZone();
     checkZoneWarnings();
+    if(!S.isDemo) processGPSFix();
   }, 1000);
 }
 function pauseTimer() { clearInterval(S.timerRef); S.timerRef=null; S.pausedElapsed=S.elapsed; }
@@ -572,37 +573,74 @@ function fmtPaceSpeech(secPerKm) {
 // ============================================================
 function startGPS() {
   if(!navigator.geolocation) { showToast('GPS not available'); return; }
+  S.lastFix = null;
   S.watchId = navigator.geolocation.watchPosition(
     pos => {
       if(S.status!=='running') return;
-      const {latitude:lat,longitude:lon,accuracy} = pos.coords;
-      const t = pos.timestamp;
-      if(accuracy > 40) return;
+      const {latitude:lat, longitude:lon, accuracy, altitude} = pos.coords;
+
+      // 1. Strict Accuracy Filter (<= 20m)
+      if(accuracy > 20) {
+        if(typeof logDebug === 'function') logDebug(`GPS skip: poor accuracy (${Math.round(accuracy)}m)`);
+        return;
+      }
+
       S.gpsReady = true;
       setDot('dot-gps','active');
-      if(S.positions.length>0) {
-        const prev = S.positions[S.positions.length-1];
-        const d = haversine(prev.lat,prev.lon,lat,lon);
-        if(d>0.003) { // >3m
-          S.distance += d;
-          S.positions.push({lat,lon,t});
-          updateRollingPace();
-        }
-      } else {
-        S.positions.push({lat,lon,t});
-      }
-      updateMetricsUI();
+
+      // Store latest valid fix for the 1Hz loop to pick up
+      S.lastFix = { lat, lon, alt: altitude || null, t: pos.timestamp, accuracy };
     },
-    err => { setDot('dot-gps','err'); },
-    {enableHighAccuracy:true,maximumAge:2000,timeout:15000}
+    err => { 
+      setDot('dot-gps','err'); 
+      if(typeof logDebug === 'function') logDebug('GPS Error: ' + err.message); 
+    },
+    {enableHighAccuracy: true, maximumAge: 1000, timeout: 10000}
   );
 }
+
 function stopGPS() {
   if(S.watchId!=null) navigator.geolocation.clearWatch(S.watchId);
-  S.watchId=null; S.gpsReady=false;
+  S.watchId=null; S.gpsReady=false; S.lastFix=null;
   setDot('dot-gps','');
 }
 
+function processGPSFix() {
+  if (!S.lastFix || S.status !== 'running') return;
+  const fix = S.lastFix;
+  const lastPt = S.positions.length > 0 ? S.positions[S.positions.length-1] : null;
+
+  // Ensure we have a new fix by checking timestamp
+  if (lastPt && fix.t <= lastPt.t) return;
+
+  let d = 0;
+  if (lastPt) {
+    d = haversine(lastPt.lat, lastPt.lon, fix.lat, fix.lon);
+    const dtSec = (fix.t - lastPt.t) / 1000;
+    if (dtSec <= 0) return;
+
+    const speed = (d * 1000) / dtSec; // meters per second
+
+    // 2. Speed Filter: Reject impossible jumps (> 10 m/s = 36 km/h)
+    if (speed > 10) {
+      if(typeof logDebug === 'function') logDebug(`GPS rejected: Speed ${speed.toFixed(1)}m/s too high`);
+      S.lastFix = null; // drop it
+      return;
+    }
+
+    // 3. Stationary Drift Filter: Ignore wiggles < 1.5m if speed is very low
+    if ((d * 1000 < 1.5) && speed < 0.5) {
+      // Do not record a trackpoint. Let the time pass so Strava sees the pause.
+      return;
+    }
+  }
+
+  S.distance += d;
+  S.positions.push({ lat: fix.lat, lon: fix.lon, t: fix.t });
+  S.trackpoints.push({ lat: fix.lat, lon: fix.lon, alt: fix.alt, t: fix.t, hr: S.bpm });
+  updateRollingPace();
+  updateMetricsUI();
+}
 function updateRollingPace() {
   const now = Date.now();
   const window = 30000;
