@@ -294,7 +294,15 @@ input{font:inherit;color:inherit}
       </div>
     </section>
 
-    <!-- SETTINGS TAB -->
+    
+    <!-- HISTORY TAB -->
+    <section class="tab-panel" id="tab-history" role="tabpanel" aria-label="History">
+      <div class="settings-section">
+        <div class="settings-title">Past Runs</div>
+        <div id="history-items" style="padding:0 16px 16px"></div>
+      </div>
+    </section>
+<!-- SETTINGS TAB -->
     <section class="tab-panel" id="tab-settings" role="tabpanel" aria-label="Settings">
       <!-- HR ZONE -->
       <div class="settings-section">
@@ -429,6 +437,10 @@ input{font:inherit;color:inherit}
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       RUN
     </button>
+    <button class="nav-btn" id="nav-history" onclick="switchTab('history')" role="tab" aria-selected="false" aria-controls="tab-history">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      HISTORY
+    </button>
     <button class="nav-btn" id="nav-settings" onclick="switchTab('settings')" role="tab" aria-selected="false" aria-controls="tab-settings">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 0 0 12 2v2a8 8 0 0 1 5.66 2.34M4.93 4.93A10 10 0 0 0 2 12h2a8 8 0 0 1 2.34-5.66m-.01 13.74A10 10 0 0 0 12 22v-2a8 8 0 0 1-5.66-2.34m13.73.01A10 10 0 0 0 22 12h-2a8 8 0 0 1-2.34 5.66"/></svg>
       SETTINGS
@@ -450,13 +462,11 @@ input{font:inherit;color:inherit}
       <div class="summary-item"><div class="summary-val" id="sum-time">–</div><div class="summary-lbl">Time</div></div>
       <div class="summary-item"><div class="summary-val" id="sum-pace">–</div><div class="summary-lbl">Avg Pace</div></div>
       <div class="summary-item"><div class="summary-val" id="sum-hr">–</div><div class="summary-lbl">Avg HR</div></div>
+    
     </div>
     <div style="display:flex;gap:10px">
-      <button class="btn-dismiss" style="background:#fc4c02;color:#fff" onclick="exportTCX()">Export TCX</button>
-      <div style="display:flex;gap:10px">
-      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--text)" onclick="exportTCX()">Export TCX (Strava)</button>
+      <button class="btn-dismiss" style="background:var(--surface-3);color:var(--text)" onclick="exportCurrentTCX()">Export TCX</button>
       <button class="btn-dismiss" onclick="dismissSummary()">Done</button>
-    </div>
     </div>
   </div>
 </div>
@@ -465,6 +475,46 @@ input{font:inherit;color:inherit}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
+
+// ============================================================
+// LOCAL STORAGE WRAPPER
+// ============================================================
+const Store = {
+  data: [],
+  load: function() {
+    try {
+      const val = localStorage.getItem('runpulse_history');
+      if (val) this.data = JSON.parse(val);
+    } catch(e) {
+      console.warn('Storage disabled or blocked', e);
+    }
+  },
+  save: function() {
+    try {
+      // Keep only last 10 runs to avoid quota issues (5MB limit)
+      if (this.data.length > 10) this.data = this.data.slice(0, 10);
+      localStorage.setItem('runpulse_history', JSON.stringify(this.data));
+    } catch(e) {
+      console.error('Storage quota or blocked', e);
+      alert('Failed to save to local storage (quota exceeded or blocked).');
+    }
+  },
+  addRun: function(runObj) {
+    this.data.unshift(runObj);
+    this.save();
+    renderHistory();
+  },
+  deleteRun: function(id) {
+    this.data = this.data.filter(r => r.id !== id);
+    this.save();
+    renderHistory();
+  },
+  getRun: function(id) {
+    return this.data.find(r => r.id === id);
+  }
+};
+Store.load();
+
 // ============================================================
 // STATE
 // ============================================================
@@ -595,7 +645,7 @@ function startGPS() {
       setDot('dot-gps','err'); 
       if(typeof logDebug === 'function') logDebug('GPS Error: ' + err.message); 
     },
-    {enableHighAccuracy: true, maximumAge: 1000, timeout: 10000}
+    {enableHighAccuracy: true, maximumAge: 0, timeout: 10000}
   );
 }
 
@@ -811,7 +861,7 @@ function handleStartPause() {
 
 function startSession() {
   S.status='running';
-  S.distance=0; S.pace=0; S.avgPace=0; S.elapsed=0;
+  S.distance=0; S.pace=0; S.currentRunId=Date.now(); S.avgPace=0; S.elapsed=0;
   S.positions=[]; S.trackpoints=[]; S.bpmHistory=[];
   S.pausedElapsed=0; S.lastFeedbackT=0; S.lastFeedbackD=0;
   S.prevInHr=null; S.prevInPace=null;
@@ -849,7 +899,19 @@ function handleStop() {
   setBtnState('idle');
   document.getElementById('timer-label').textContent='STOPPED';
   document.getElementById('timer-val').classList.remove('running-color');
-  if(prevDist>0.05||prevElapsed>10) showSummary(prevDist,prevElapsed,prevAvgPace,avgHr);
+  if(prevDist>0.05||prevElapsed>10) {
+    showSummary(prevDist,prevElapsed,prevAvgPace,avgHr);
+    const runObj = {
+      id: S.currentRunId || Date.now(),
+      date: new Date().toISOString(),
+      distance: prevDist,
+      elapsed: prevElapsed,
+      avgPace: prevAvgPace,
+      avgHr: avgHr,
+      trackpoints: JSON.parse(JSON.stringify(S.trackpoints)) // deep copy
+    };
+    Store.addRun(runObj);
+  }
   setTimeout(()=>{ S.status='idle'; setBtnState('idle'); document.getElementById('timer-label').textContent='READY'; },500);
 }
 
@@ -1077,7 +1139,7 @@ function updateMusicPlayerUI() {
 // UI HELPERS
 // ============================================================
 function switchTab(name) {
-  ['run','settings','music'].forEach(t=>{
+  ['run','history','settings','music'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
     const nb=document.getElementById('nav-'+t);
     nb.classList.toggle('active',t===name);
@@ -1141,7 +1203,7 @@ document.addEventListener('visibilitychange',async()=>{
 // ============================================================
 // EXPORT TO TCX (STRAVA NATIVE)
 // ============================================================
-function exportTCX() {
+function exportCurrentTCX() {
   if (S.trackpoints.length === 0) {
     showToast('No GPS data to export');
     return;
